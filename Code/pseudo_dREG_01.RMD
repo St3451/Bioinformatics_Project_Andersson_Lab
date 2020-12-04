@@ -24,7 +24,7 @@ ATAC_granges
 CAGE_granges
 ```
 
-# Create the positive set for chromosome 1
+# Extract the positive set
 
 ```{r}
 # Extend ATAC peaks 250 bp in both directions
@@ -60,16 +60,9 @@ table(seqnames(ATAC_granges_peaks_filtered))
 GenomicRanges::reduce(ATAC_granges_peaks)
 ```
 
-```{r}
-# Select chromosome 1
-CAGE_chr1 <- CAGE_granges[seqnames(CAGE_granges) == "chr1"]
-ATAC_chr1 <- ATAC_granges_peaks_filtered[seqnames(ATAC_granges_peaks_filtered) == "chr1"]
-```
-
+## Extract the windows profile
 
 ```{r}
-# Intersect ATAC regions with CAGE data and get the counts of CAGE reads for each position of each region
-
 # Report time execution
 report_time_execution <- function(fun){
   start_time <- Sys.time()
@@ -94,67 +87,59 @@ get_count_vector_both_strands <- function(df){
 }
   
 # Return the CAGE profiles of the (CAGE) overlapping ATAC regions
-get_windows_profiles <- function(cage_granges, atac_granges, return_atac_start = TRUE){
+get_chr_windows_profiles <- function(cage_granges, atac_granges, chr){
+  # Select chromosome
+  cage_granges <- cage_granges[seqnames(cage_granges) == chr]
+  atac_granges <- atac_granges[seqnames(atac_granges) == chr]
   # Add all information into one df
-  overlaps <- findOverlaps(cage_granges, atac_granges)                 # Index of overlapping CAGE fragment
-  df <- cage_granges[queryHits(overlaps)]                              # Keep only overlapping CAGE data
-  df$index_overlapping_atac <- subjectHits(overlaps)                   # Add index of overlapping ATAC   
-  df %>% as_tibble() %>%                                               # Add ATAC start site and relative position
-    mutate(atac_start = start(atac_granges[subjectHits(overlaps)]),
-           atac_relative_pos = start - atac_start + 1) -> df
-  # Extract profiles of each (CAGE) overlapping ATAC region
-  profiles <- by(data = df, 
-                 INDICES = df$index_overlapping_atac, 
-                 FUN = function(x){get_count_vector_both_strands(x)})
-  profiles <- data.frame(do.call(rbind, profiles))
-  # Return ATAC-Seq window start site or index of ATAC grages as rownames
-  if (return_atac_start) {rownames(profiles) <- start(atac_granges[as.numeric(rownames(profiles))])} 
-  else {rownames(profiles) <- sort(unique(subjectHits(overlaps)))}
-  colnames(profiles) <- c(paste("Plus_", 1:501, sep = ""), paste("Minus_", 1:501, sep = ""))
-  return(profiles)
+  overlaps <- findOverlaps(cage_granges, atac_granges)                   # Index of overlapping CAGE fragment
+  length(overlaps)  
+  # Check if there are ATAC positive windows overlapping CAGE data
+  if (length(overlaps) > 0){                                                   
+    df <- cage_granges[queryHits(overlaps)]                              # Keep only overlapping CAGE data
+    df$index_overlapping_atac <- subjectHits(overlaps)                   # Add index of overlapping ATAC   
+    df %>% as_tibble() %>%                                               # Add ATAC start site and relative position
+      mutate(atac_start = start(atac_granges[subjectHits(overlaps)]),
+             atac_relative_pos = start - atac_start + 1) -> df
+    # Extract profiles of each (CAGE) overlapping ATAC region
+    profiles <- by(data = df, 
+                   INDICES = df$index_overlapping_atac, 
+                   FUN = function(x){get_count_vector_both_strands(x)})
+    profiles <- data.frame(do.call(rbind, profiles))
+    colnames(profiles) <- c(paste("Plus_", 1:501, sep = ""), paste("Minus_", 1:501, sep = ""))
+    # Add metadata information
+    profiles <- profiles %>% mutate(# atac_index = sort(unique(subjectHits(overlaps))),
+                                    atac_start = start(atac_granges[as.numeric(rownames(profiles))]),
+                                    chr = chr) %>% relocate(c(chr, atac_start), .before = Plus_1) 
+    return(profiles)
+  } 
+  else {
+    print(paste(chr, "contains no overlapping windows"))
+    return(NULL)
+  }
 }
 
-atac_peaks_profile <- report_time_execution(get_windows_profiles(CAGE_chr1, ATAC_chr1))
+# Return the windows profiles for all chromosomes
+get_windows_profiles <- function(cage_granges, atac_granges){
+  chromosomes <- unique(seqnames(cage_granges))
+  list_chr_profiles <- lapply(chromosomes, function(x) 
+        {get_chr_windows_profiles(cage_granges = cage_granges, 
+         atac_granges = atac_granges,
+         chr = x)})
+  final_df <- data.frame(do.call(rbind, list_chr_profiles))  
+  return(final_df)
+}
+
+pos_windows_profiles <- report_time_execution(get_windows_profiles(CAGE_granges, 
+                                                                   ATAC_granges_peaks_filtered))
+pos_windows_metadata <- pos_windows_profiles %>% select(chr, atac_start)
+pos_windows_profiles <- pos_windows_profiles %>% select(-chr, -atac_start)
+pos_windows_metadata
+pos_windows_profiles
 ```
 
-```{r}
-## Alternative method (very slow, TO DELETE)
+## Exploration of the obtained profiles
 
-# Get CAGE count at position x
-get_cage_count_by_pos <- function(pos, cage){
-  return(sum(cage$score[start(cage) == pos]))
-}
-get_cage_count_by_pos(start(ATAC_chr1[120]))
-
-# Obtain CAGE coverage for each position of one ATAC window peak
-get_cage_count_vector <- function(start_pos, cage){
-  atac_range = start_pos : (start_pos + 500)
-  window_profile <- sapply(atac_range, get_cage_count_by_pos, cage = cage)
-  return(window_profile)
-}
-count_vector <- report_time_execution(get_cage_count_vector(start(ATAC_chr1[120]), 
-                                                            CAGE_chr1[strand(CAGE_chr1) == "+"]))
-
-# Obtain CAGE coverage for each position of each ATAC window peak for both plus and minus strand
-get_atac_peaks_profile <- function(atac_granges, cage){
-  overlaps <- findOverlaps(cage, atac_granges)
-  atac_granges <- atac_granges[unique(subjectHits(overlaps))]
-  cage <- cage[unique(queryHits(overlaps))]
-  vector_list_plus <- lapply(start(atac_granges), get_cage_count_vector, cage = cage[strand(cage) == "+"])
-  df_plus <- data.frame(do.call(rbind, vector_list_plus))
-  vector_list_minus <- lapply(start(atac_granges), get_cage_count_vector, cage = cage[strand(cage) == "-"])
-  df_minus <- data.frame(do.call(rbind, vector_list_minus))
-  df <- cbind(df_plus, df_minus)
-  colnames(df) <- c(paste("Plus_", 1:501, sep = ""), paste("Minus_", 1:501, sep = ""))
-  rownames(df) <- start(atac_granges)
-  return(df)
-}
-
-atac_peaks_profile_short <- report_time_execution(get_atac_peaks_profile(ATAC_chr1[1:10], CAGE_chr1)) 
-```
-
-
- 
 ```{r}
 ## Explore the resulting profiles
 
@@ -165,28 +150,28 @@ get_cage_distribution_by_peak_position <- function(peaks_profile_df){
   rename(score = value) %>% relocate(score, .after = strand) %>%
   mutate(score = ifelse(strand == "-", -score, score))
 }
-cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(atac_peaks_profile)
+cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(pos_windows_profiles)
 
 cage_distribution_by_peak_position %>% ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
  # facet_zoom(ylim=c(-3000, 1000), shrink = FALSE) +
-  labs(title = "CAGE score distribution over ATAC-Seq peaks relative position (Chr1)",  
+  labs(title = "CAGE score distribution over ATAC-Seq peaks relative position (All chr)",  
        x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
    scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw()
 
 # Plot distribution of ATAC-Seq peaks CAGE total coverage 
-get_peaks_total_cage_coverage_distribution <- function(peaks_profile_df){
+get_windows_total_cage_score_distribution <- function(peaks_profile_df){
   peaks_profile_df %>% 
     count(apply(peaks_profile_df, 1, sum)) %>% 
     rename(total_score = "apply(peaks_profile_df, 1, sum)", n_atac_peaks = n) %>%
     relocate(total_score, .after = n_atac_peaks) 
 }
 
-peaks_total_cage_coverage_distribution <- get_peaks_total_cage_coverage_distribution(atac_peaks_profile)
-peaks_total_cage_coverage_distribution
-peaks_total_cage_coverage_distribution %>% arrange(desc(total_score))
+windows_total_cage_score_distribution <- get_windows_total_cage_score_distribution(pos_windows_profiles)
+windows_total_cage_score_distribution
+windows_total_cage_score_distribution %>% arrange(desc(total_score))
 
 # Focus on ATAC-Seq peaks number
-peaks_total_cage_coverage_distribution %>% filter(total_score < 50) %>% 
+windows_total_cage_score_distribution %>% filter(total_score < 50) %>% 
   ggplot(aes(x = total_score, y = n_atac_peaks)) + 
   geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[1]) + 
   scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
@@ -198,7 +183,7 @@ peaks_total_cage_coverage_distribution %>% filter(total_score < 50) %>%
   theme(legend.position = "none")
 
 # Focus on CAGE total coverage per peak
-peaks_total_cage_coverage_distribution %>% mutate(type = "Windows profiles") %>% 
+windows_total_cage_score_distribution %>% mutate(type = "Windows profiles") %>% 
   ggplot(aes(x = type, y = total_score)) + geom_violin(fill= brewer.pal(8,"Greys")[3]) +
   geom_jitter(aes(size = n_atac_peaks, col = n_atac_peaks), alpha=0.5) + theme_bw() +
   labs(title = "Windows profiles total score distribution", 
@@ -212,8 +197,8 @@ peaks_total_cage_coverage_distribution %>% mutate(type = "Windows profiles") %>%
   theme(axis.title.x=element_blank())
 
 # Plot the maximum tss score of each window
-min_tss_score_distribution <- rownames_to_column(atac_peaks_profile, var = "atac_start") %>% 
-  mutate(max_tss_score = apply(atac_peaks_profile, 1, max)) %>% 
+min_tss_score_distribution <- rownames_to_column(pos_windows_profiles, var = "atac_start") %>% 
+  mutate(max_tss_score = apply(pos_windows_profiles, 1, max)) %>% 
   select(atac_start, max_tss_score) %>% group_by(max_tss_score) %>% count()
 
 min_tss_score_distribution
@@ -231,53 +216,64 @@ min_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red"
   theme(legend.position = "none")
 ```
 
+## Positive windows filtering and exploration
 
 ```{r}
-## ATAC-Seq profile (positive set) data cleaning
+## Positive set filtering
 
 # Try different filters and observe the resulting profiles
-windows_profiles_filter <- function(peaks_profile_df, threshold = 1, fun = max){
-  return(peaks_profile_df[apply(peaks_profile_df, 1, fun) > threshold,])
+windows_profiles_filter <- function(windows_profile, 
+                                    windows_metadata = NA,
+                                    threshold = 1, fun = max){
+  filter <- apply(windows_profile, 1, fun) > threshold
+  if (!missing(windows_metadata)) {
+    output <- list()
+    output$profiles <-  windows_profile[filter,]
+    output$metadata <- windows_metadata[filter,]
+  } else {
+    output <- windows_profile[filter,]
+  }
+  return(output)
 }
 
-atac_peaks_profile_filtered_atleast_2_sum <- windows_profiles_filter(atac_peaks_profile, fun = sum)
-atac_peaks_profile_filtered_atleast_2_max <- windows_profiles_filter(atac_peaks_profile)
-atac_peaks_profile_filtered_atleast_3_max <- windows_profiles_filter(atac_peaks_profile, threshold = 2)
+windows_profile_filtered_atleast_2_sum <- windows_profiles_filter(pos_windows_profiles, fun = sum)
+windows_profile_filtered_atleast_2_max <- windows_profiles_filter(pos_windows_profiles)
+windows_profile_filtered_atleast_3_max <- windows_profiles_filter(pos_windows_profiles, threshold = 2)
 
-print(paste("Original windows number:", nrow(atac_peaks_profile)))
-print(paste("N. windows after filtering (at least 2 reads in total):", nrow(atac_peaks_profile_filtered_atleast_2_sum)))
-print(paste("N. windows after filtering (at least a TSS with 2 reads):", nrow(atac_peaks_profile_filtered_atleast_2_max)))
-print(paste("N. windows after filtering (at least a TSS with 3 reads):", nrow(atac_peaks_profile_filtered_atleast_3_max)))
+print(paste("Original windows number:", nrow(pos_windows_profiles)))
+print(paste("N. windows after filtering (at least 2 reads in total):", nrow(windows_profile_filtered_atleast_2_sum)))
+print(paste("N. windows after filtering (at least a TSS with 2 reads):", nrow(windows_profile_filtered_atleast_2_max)))
+print(paste("N. windows after filtering (at least a TSS with 3 reads):", nrow(windows_profile_filtered_atleast_3_max)))
 
 
 ## Plot after filtering
 
-cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(atac_peaks_profile_filtered_atleast_2_max)
+cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(windows_profile_filtered_atleast_2_max)
 
 cage_distribution_by_peak_position %>% ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
  # facet_zoom(ylim=c(-3000, 1000), shrink = FALSE) +
-  labs(title = "CAGE score distribution over ATAC-Seq peaks relative position (Chr1)",  
+  labs(title = "CAGE score distribution over ATAC-Seq peaks relative position (All chr)",  
        x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
    scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw()
 
 # Plot distribution of ATAC-Seq peaks CAGE total coverage 
-get_peaks_total_cage_coverage_distribution <- function(peaks_profile_df){
+get_windows_total_cage_score_distribution <- function(peaks_profile_df){
   peaks_profile_df %>% 
     count(apply(peaks_profile_df, 1, sum)) %>% 
     rename(total_score = "apply(peaks_profile_df, 1, sum)", n_atac_peaks = n) %>%
     relocate(total_score, .after = n_atac_peaks) 
 }
 
-peaks_total_cage_coverage_distribution <- get_peaks_total_cage_coverage_distribution(atac_peaks_profile_filtered_atleast_2_max)
-peaks_total_cage_coverage_distribution
-peaks_total_cage_coverage_distribution %>% arrange(desc(total_score))
+windows_total_cage_score_distribution <- get_windows_total_cage_score_distribution(windows_profile_filtered_atleast_2_max)
+windows_total_cage_score_distribution
+windows_total_cage_score_distribution %>% arrange(desc(total_score))
 
 # Focus on ATAC-Seq peaks number
-peaks_total_cage_coverage_distribution %>% filter(total_score < 50) %>% 
+windows_total_cage_score_distribution %>% filter(total_score < 50) %>% 
   ggplot(aes(x = total_score, y = n_atac_peaks)) + 
   geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[1]) + 
   scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
-  labs(title = "Windows profiles total score distribution", 
+  labs(title = "Windows profiles total score distribution (All chr)", 
        y = "N. Windows profiles",
        x = "Total CAGE score",
        fill = NA) +
@@ -285,10 +281,10 @@ peaks_total_cage_coverage_distribution %>% filter(total_score < 50) %>%
   theme(legend.position = "none")
 
 # Focus on CAGE total coverage per peak
-peaks_total_cage_coverage_distribution %>% mutate(type = "Windows profiles") %>% 
+windows_total_cage_score_distribution %>% mutate(type = "Windows profiles") %>% 
   ggplot(aes(x = type, y = total_score)) + geom_violin(fill= brewer.pal(8,"Greys")[3]) +
   geom_jitter(aes(size = n_atac_peaks, col = n_atac_peaks), alpha=0.5) + theme_bw() +
-  labs(title = "Windows profiles total score distribution", 
+  labs(title = "Windows profiles total score distribution (All chr)", 
      x = NA,
      y = "Total CAGE score",
      size = "N. Windows profiles",
@@ -299,8 +295,8 @@ peaks_total_cage_coverage_distribution %>% mutate(type = "Windows profiles") %>%
   theme(axis.title.x=element_blank())
 
 # Plot the maximum tss score of each window
-min_tss_score_distribution <- rownames_to_column(atac_peaks_profile, var = "atac_start") %>% 
-  mutate(max_tss_score = apply(atac_peaks_profile, 1, max)) %>% 
+min_tss_score_distribution <- rownames_to_column(pos_windows_profiles, var = "atac_start") %>% 
+  mutate(max_tss_score = apply(pos_windows_profiles, 1, max)) %>% 
   select(atac_start, max_tss_score) %>% group_by(max_tss_score) %>% count()
 
 min_tss_score_distribution
@@ -310,7 +306,7 @@ min_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red"
   facet_zoom(ylim=c(0, 60), shrink = FALSE) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
   coord_cartesian(xlim = c(0, 50)) +
-  labs(title = "Max TSS score distribution", 
+  labs(title = "Max TSS score distribution (All chr)", 
        y = "N. ATAC windows profiles",
        x = "Max TSS score",
        fill = NA) +
@@ -318,15 +314,22 @@ min_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red"
   theme(legend.position = "none")
 ```
 
+## Explore some differnet chromosomes profiles and score distribution
+
 ```{r}
 # Plot some profiles
-plot_positive_set_profile <- function(peaks_profile_df, ylim = c(-50, 50), range = 1:104, sort = FALSE){
-  peaks_profile_df %>% 
-    mutate(total_coverage = apply(peaks_profile_df, 1, sum),
-           max_coverage = apply(peaks_profile_df, 1, max)) %>%
-    mutate(window = paste("w_", 1:nrow(peaks_profile_df), "\n(T=", as.character(total_coverage), ", \nM=", max_coverage, ")", sep = "")) %>%
+plot_positive_set_profile <- function(windows_profile,
+                                      metadata_profile,
+                                      chr,
+                                      ylim = c(-50, 50), range = 1:104, sort = FALSE){
+  windows_profile <- windows_profile[metadata_profile$chr == chr,]
+  windows_profile %>% 
+    mutate(total_coverage = apply(windows_profile, 1, sum),
+           max_coverage = apply(windows_profile, 1, max)) %>%
+    mutate(window = paste("w_", 1:nrow(windows_profile), 
+                          "\n(T=", as.character(total_coverage), ", \nM=", 
+                          max_coverage, ")", sep = "")) %>%
     relocate(c(window, total_coverage), .before = Plus_1) -> temp
-  
   if (sort == TRUE){
     temp %>% arrange(desc(total_coverage)) %>% slice(range) -> temp
   } 
@@ -337,10 +340,12 @@ plot_positive_set_profile <- function(peaks_profile_df, ylim = c(-50, 50), range
   temp$strand[grepl("^P", temp$variable)] <- "+"
   temp$variable <- as.numeric(gsub("\\D", "", temp$variable)) - 251
   
+  
   temp %>% ggplot(aes(x = variable, y = value, color = strand)) + geom_line() + 
     facet_wrap(~window, ncol = 8, strip.position = "left") +
     coord_cartesian(ylim = ylim) +
-    labs(title = paste("Positive set windows profiles (", deparse(substitute(range)), ")", sep = ""), 
+    labs(title = paste("Positive set windows profiles (", 
+                       deparse(substitute(range)), ", ", chr, ")", sep = ""), 
          y = "TSS score",
          x = "Relative position to ATAC-Seq mid peak",
          fill = NA) +
@@ -348,75 +353,54 @@ plot_positive_set_profile <- function(peaks_profile_df, ylim = c(-50, 50), range
   return(plot)
 }
 
-plot_positive_set_profile(atac_peaks_profile_filtered_atleast_2_max, range = 1:104) 
-plot_positive_set_profile(atac_peaks_profile_filtered_atleast_2_max, range = 105:208)
-plot_positive_set_profile(atac_peaks_profile_filtered_atleast_2_max, range = 209:312)
-plot_positive_set_profile(atac_peaks_profile_filtered_atleast_2_max, range = 313:416) 
-plot_positive_set_profile(atac_peaks_profile_filtered_atleast_2_max, range = 417:520) 
-plot_positive_set_profile(atac_peaks_profile_filtered_atleast_2_max, ylim = c(-15, 15), range = 521:624)
+positive_windows_filtered <- windows_profiles_filter(pos_windows_profiles,
+                                                     pos_windows_metadata)
+
+plot_positive_set_profile(positive_windows_filtered$profiles,
+                          positive_windows_filtered$metadata, chr = "chr1", sort=TRUE) 
+plot_positive_set_profile(positive_windows_filtered$profiles,
+                          positive_windows_filtered$metadata, chr = "chr2") 
+plot_positive_set_profile(positive_windows_filtered$profiles,
+                          positive_windows_filtered$metadata, chr = "chr3") 
+plot_positive_set_profile(positive_windows_filtered$profiles,
+                          positive_windows_filtered$metadata, chr = "chr8") 
+plot_positive_set_profile(positive_windows_filtered$profiles,
+                          positive_windows_filtered$metadata, chr = "chr15") 
+plot_positive_set_profile(positive_windows_filtered$profiles,
+                          positive_windows_filtered$metadata, chr = "chrX") 
 ```
 
-# Create the positive set for all chromosomes
+## Exploration of different chromosomes profiles
 
 ```{r}
-# Use all chromosomes
-CAGE_granges
-ATAC_granges_peaks_filtered
-
-
-
-# Return score if the position in present, 0 otherwise
-get_count_vector <- function(pos, df){
-  if (pos %in% df$atac_relative_pos) {
-  return(df$score[which(df$atac_relative_pos == pos)])
-} else {return(0)}
+# Get the distribution of CAGE score over one chr windows positions 
+get_score_distribution_by_pos_one_chr <- function(list_windows, chr){
+  windows_profile <- list_windows$profiles[list_windows$metadata == chr,]
+  score_distribution <- get_cage_distribution_by_peak_position(windows_profile)
+  score_distribution$chr = chr
+  return(score_distribution)  
 }
 
-# Return score vector for each position for both strands
-get_count_vector_both_strands <- function(df){
-  plus_count_vector <- sapply(1:501, get_count_vector, df = df[df$strand == "+",])
-  minus_count_vector <- sapply(1:501, get_count_vector, df = df[df$strand == "-",])
-  return(c(plus_count_vector, minus_count_vector))
+# Get the distribution of CAGE score for all chr
+get_score_distribution_by_pos_all_chr <- function(list_windows){
+  list_df <- lapply(unique(list_windows$metadata$chr), function(x){
+    get_score_distribution_by_pos_one_chr(list_windows, as.character(x))}) 
+  return(data.frame(do.call(rbind, list_df)))
 }
+
+pos_windows_score_distribution_by_pos_all_chr <-   
+  get_score_distribution_by_pos_all_chr(positive_windows_filtered)
   
-# Return the CAGE profiles of the (CAGE) overlapping ATAC regions
-get_windows_profiles <- function(cage_granges, atac_granges, chr){
-  # Select chromosome
-  cage_granges <- cage_granges[seqnames(cage_granges) == chr]
-  atac_granges <- atac_granges[seqnames(atac_granges) == chr]
-  # Add all information into one df
-  overlaps <- findOverlaps(cage_granges, atac_granges)                 # Index of overlapping CAGE fragment
-  df <- cage_granges[queryHits(overlaps)]                              # Keep only overlapping CAGE data
-  df$index_overlapping_atac <- subjectHits(overlaps)                   # Add index of overlapping ATAC   
-  df %>% as_tibble() %>%                                               # Add ATAC start site and relative position
-    mutate(atac_start = start(atac_granges[subjectHits(overlaps)]),
-           atac_relative_pos = start - atac_start + 1) -> df
-  # Extract profiles of each (CAGE) overlapping ATAC region
-  profiles <- by(data = df, 
-                 INDICES = df$index_overlapping_atac, 
-                 FUN = function(x){get_count_vector_both_strands(x)})
-  profiles <- data.frame(do.call(rbind, profiles))
-  colnames(profiles) <- c(paste("Plus_", 1:501, sep = ""), paste("Minus_", 1:501, sep = ""))
-  # Add metadata information
-  profiles <- profiles %>% mutate(# atac_index = sort(unique(subjectHits(overlaps))),
-                                  atac_start = start(atac_granges[as.numeric(rownames(profiles))]),
-                                  chr = chr) %>% relocate(c(chr, atac_start), .before = Plus_1) 
-  return(profiles)
-}
-
-final_function <- function(cage_granges, atac_granges){
-  chromosomes <- unique(seqnames(cage_granges))[1:22]           # CHECK PROBLEM WITH SEX CHROSOMES 
-  list_chr_profiles <- lapply(chromosomes, function(x) {get_windows_profiles(cage_granges = cage_granges, 
-                                                                             atac_granges = atac_granges,
-                                                                             chr = x)})
-  final_df <- data.frame(do.call(rbind, list_chr_profiles))  
-  return(final_df)
-}
-
-final_profiles <- report_time_execution(final_function(CAGE_granges, ATAC_granges_peaks_filtered))
-
-atac_peaks_profile <- final_profiles %>% select(-chr, -atac_start)
+pos_windows_score_distribution_by_pos_all_chr %>% 
+  ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+  labs(title = "Positive set CAGE score distribution over ATAC-Seq peaks relative position",  
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+  coord_cartesian(ylim = c(-1000, 1000)) +
+  facet_wrap(~factor(chr,
+                     levels = paste("chr", c(1:22, "X", "Y"), sep=""))) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw()
 ```
+
 
 
 
