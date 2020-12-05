@@ -2,12 +2,10 @@
 This is the repository for Stefano project and thesis
 
 # Project
-
-## Aim
 * Prediction of potential active open chromatin regions using CAGE data
 
 ## Week 1, 2
-* Familiarize with the problem and the data
+* Familiarize with the problem and data
 * Understand dREG input and output
 
 ## Week 3 
