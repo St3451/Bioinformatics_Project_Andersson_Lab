@@ -1,11 +1,21 @@
 # Stefano_Project_Thesis
-This is the repository for Stefano project and thesis.
+This is the repository for Stefano project and thesis
 
 # Project
 
 ## Aim
 * Prediction of potential active open chromatin regions using CAGE data
 
-##  Strategy
-* Start by using the approach of an available tool (dREG) that performs a similar task with different data
-* Explore different approaches to achieve optimal generalization performance
+## Week 1, 2
+* Familiarize with the problem and the data
+* Understand dREG input and output
+
+## Week 3 
+* Implemented exploration and input profiles extraction for ML models
+* Implemented first ML models: random forest, lightGBM, SVM RBF
+
+## Week 4
+* To do: 
+    - Assess pos profiles filtering, negative ranges extraction, merge and use all replicates;
+    - Perform SVM and lightGBVM hyperparameter tuning
+    - Neural network?
