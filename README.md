@@ -11,9 +11,11 @@ This is the repository for Stefano project and thesis
 ## Week 3 
 * Implemented exploration and input profiles extraction for ML models
 * Implemented first ML models: random forest, lightGBM, SVM RBF
+* Models evaluation
 
 ## Week 4
 * To do: 
-    - Assess pos profiles filtering, negative ranges extraction, merge and use all replicates;
+    - Split train into train and validation for tuning
+    - Assess pos profiles filtering, negative ranges extraction, use all replicates
     - Perform SVM and lightGBVM hyperparameter tuning
     - Neural network?
