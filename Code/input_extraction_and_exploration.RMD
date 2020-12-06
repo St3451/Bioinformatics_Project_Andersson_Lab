@@ -394,7 +394,7 @@ plo_set_profiles <- function(windows,
   temp %>% ggplot(aes(x = variable, y = value, color = strand)) + geom_line() + 
     facet_wrap(~window, ncol = 8, strip.position = "left") +
     coord_cartesian(ylim = ylim) +
-    labs(title = paste("Positive set windows profiles (", 
+    labs(title = paste("Windows profiles (", 
                        deparse(substitute(range)), ", ", chr, ")", sep = ""), 
          y = "TSS score",
          x = "Relative position to ATAC-Seq mid peak",
@@ -404,8 +404,11 @@ plo_set_profiles <- function(windows,
 }
 
 plo_set_profiles(pos_windows_filtered, chr = "chr1", sort=TRUE) 
-plo_set_profiles(pos_windows_filtered, chr = "chr15") 
-plo_set_profiles(pos_windows_filtered, chr = "chrX") 
+plo_set_profiles(pos_windows_filtered, chr = "chr6", sort=TRUE) 
+plo_set_profiles(pos_windows_filtered, chr = "chr11", sort=TRUE) 
+plo_set_profiles(pos_windows_filtered, chr = "chr2", sort=TRUE) 
+plo_set_profiles(pos_windows_filtered, chr = "chr3", sort=TRUE) 
+plo_set_profiles(pos_windows_filtered, chr = "chr4", sort=TRUE) 
 ```
 
 
@@ -421,6 +424,14 @@ positive_set_granges <- GRanges(seqnames = pos_windows_filtered$metadata$chr,
 
 export(positive_set_granges, "../Data/pseudo_dreg_sets/positive_set_replicate1.bed", format = "bed")
 export(ATAC_granges_peaks, "../Data/atac_positive_all_granges_501.bed", format = "bed")
+
+# Duplicate 4 times the ATAC_peaks so to use as -i to generate more ranges with shuffle
+ATAC_granges_duplicated <- GRanges(rbind(as.data.frame(ATAC_granges_peaks),
+                                         as.data.frame(shift(ATAC_granges_peaks, 1)),
+                                         as.data.frame(shift(ATAC_granges_peaks, 2)),
+                                         as.data.frame(shift(ATAC_granges_peaks, -1)),
+                                         as.data.frame(shift(ATAC_granges_peaks, -2))))
+export(ATAC_granges_duplicated, "../Data/atac_positive_all_granges_501_duplicatedX4.bed", format = "bed")
 ```
 
 
@@ -433,6 +444,9 @@ bedtools shuffle -i positive_set_replicate1.bed -g ../hg38.bed -incl ../ctss_fil
 # - They will be the same size, num and strand proportion as atac positive granges, blacklist and atac positive granges will not be included, allow overlaps, don't force CAGE TSS
 # - I will need to reiterate several times before I reach the desired number of profiles with at least a TSS
 bedtools shuffle -i ../atac_positive_all_granges_501.bed -g ../hg38.bed -excl hg38-blacklist.v2.bed -excl ../atac_positive_all_granges_501.bed > negative_set_replicate1_b1.bed
+
+# Do the same but without creating overlaps in the generated ranges
+bedtools shuffle -i ../atac_positive_all_granges_501_duplicatedX4.bed -g ../hg38.bed -excl hg38-blacklist.v2.bed -excl ../atac_positive_all_granges_501.bed -noOverlapping > negative_set_replicate1_duplicateX4_noOverlaps.bed
 ```
 
 Method A: I start and end 7k ranges that overlap atleast with 1 CAGE (forced by bedtools shuffle)
@@ -546,18 +560,22 @@ windows_score_distribution_by_pos_all_chr %>%
 ```{r}
 # Plot some profiles
 plo_set_profiles(neg_windows, chr = "chr1", sort=TRUE) 
-plo_set_profiles(neg_windows, chr = "chr15") 
-plo_set_profiles(neg_windows, chr = "chrX") 
+plo_set_profiles(neg_windows, chr = "chr6", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr11", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr2", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr3", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr4", sort=TRUE) 
 ```
 
 
 
-# Extraction and exploration of negative range profiles (B, shuffling 218k ranges)
+# Extraction and exploration of negative range profiles (B, shuffling 218k ranges) 
 
 ```{r}
 # Import negative set ranges and check for overlaps
 negative_set_granges <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b1.bed", format = "bed")
 findOverlaps(negative_set_granges, positive_set_granges)
+sum(countOverlaps(negative_set_granges) > 1)
 
 # Extract CAGE profiles
 neg_windows <- report_time_execution(get_windows_profiles(CAGE_granges, 
@@ -657,31 +675,40 @@ windows_score_distribution_by_pos_all_chr %>%
 ```{r}
 # Plot some profiles
 plo_set_profiles(neg_windows, chr = "chr1", sort=TRUE) 
-plo_set_profiles(neg_windows, chr = "chr15") 
-plo_set_profiles(neg_windows, chr = "chrX") 
+plo_set_profiles(neg_windows, chr = "chr6", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr11", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr2", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr3", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr4", sort=TRUE)  
 ```
 
-
-
-
-
-# Extraction and exploration of negative range profiles (B, shuffling 650k ranges)
+# Extraction and exploration of negative range profiles (B, shuffling 220k ranges than use union) (WRONG)
 
 ```{r}
 # Import negative set ranges and check for overlaps
-negative_set_granges_1 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b1.bed", format = "bed")
-negative_set_granges_2 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b2.bed", format = "bed")
-negative_set_granges_3 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b3.bed", format = "bed")
-negative_set_granges_4 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b4.bed", format = "bed")
-negative_set_granges_5 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b5.bed", format = "bed")
+#negative_set_granges_1 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b1.bed", format = "bed")
+#negative_set_granges_2 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b2.bed", format = "bed")
+#negative_set_granges_3 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b3.bed", format = "bed")
+#negative_set_granges_4 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b4.bed", format = "bed")
+#negative_set_granges_5 <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_b5.bed", format = "bed")
 
-negative_set_granges <- GenomicRanges::union(negative_set_granges_1, negative_set_granges_2)
-negative_set_granges <- GenomicRanges::union(negative_set_granges, negative_set_granges_3)
-negative_set_granges <- GenomicRanges::union(negative_set_granges, negative_set_granges_4)
-negative_set_granges <- GenomicRanges::union(negative_set_granges, negative_set_granges_5)
+#negative_set_granges <- GenomicRanges::union(negative_set_granges_1, negative_set_granges_2)
+#negative_set_granges <- GenomicRanges::union(negative_set_granges, negative_set_granges_3)
+#negative_set_granges <- GenomicRanges::union(negative_set_granges, negative_set_granges_4)
+#negative_set_granges <- GenomicRanges::union(negative_set_granges, negative_set_granges_5)
+```
 
-# Check for overlaps with ATAC positive regions
+
+# Extraction and exploration of negative range profiles (B2, shuffling 1200k ranges without overlaps) (Best)
+
+```{r}
+# Import negative set ranges and check for overlaps
+negative_set_granges <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_duplicateX4_noOverlaps.bed", format = "bed")
+
+# Check for overlaps with ATAC positive regions and between granges in the same file
 findOverlaps(negative_set_granges, positive_set_granges)
+paste("Ranges before extraction:", length(negative_set_granges))
+paste("Within overlaps:", sum(countOverlaps(negative_set_granges) > 1))
 
 # Extract CAGE profiles
 neg_windows <- report_time_execution(get_windows_profiles(CAGE_granges, 
@@ -696,7 +723,7 @@ if (sum(non_overlapping_ranges) > 0){
 }
 
 rows = nrow(neg_windows$metadata)
-rows
+paste("Extracted profiles:", rows)
 krows <- round(rows/1000)
 ```
 
@@ -790,7 +817,11 @@ windows_score_distribution_by_pos_all_chr %>%
 ```{r}
 # Plot some profiles
 plo_set_profiles(neg_windows, chr = "chr1", sort=TRUE) 
-plo_set_profiles(neg_windows, chr = "chrX") 
+plo_set_profiles(neg_windows, chr = "chr6", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr11", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr2", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr3", sort=TRUE) 
+plo_set_profiles(neg_windows, chr = "chr4", sort=TRUE) 
 ```
 
 
@@ -831,9 +862,9 @@ index <- sample(nrow(windows_profile))
 windows_profile <- windows_profile[index,]
 windows_metadata <- windows_metadata[index,]
 
-print(nrow(windows_profile))
-print(nrow(pos_windows_filtered$profile))
-print(nrow(neg_windows_sampled$profile))
+paste("Size windows profile", nrow(windows_profile))
+paste("Size positive windows profile (filtered)", nrow(pos_windows_filtered$profile))
+paste("Size negative windows profile (sampled)", nrow(neg_windows_sampled$profile))
 
 # Divide train and test by chr
 test_index <- windows_metadata$chr %in% c("chr2", "chr3", "chr4")
@@ -843,12 +874,12 @@ windows_profile_train <- windows_profile[!test_index,]
 windows_metadata_train <- windows_metadata[!test_index,]
 
 # Export
-write_csv(windows_profile, "../Data/ML_input/profiles_replicate1_b.csv")
-write_csv(windows_metadata, "../Data/ML_input/metadata_replicate1_b.csv")
-write_csv(windows_profile_test, "../Data/ML_input/profiles_replicate1_b_test.csv")
-write_csv(windows_metadata_test, "../Data/ML_input/metadata_replicate1_b_test.csv")
-write_csv(windows_profile_train, "../Data/ML_input/profiles_replicate1_b_train.csv")
-write_csv(windows_metadata_train, "../Data/ML_input/metadata_replicate1_b_train.csv")
+write_csv(windows_profile, "../Data/ML_input/profiles_replicate1_b2.csv")
+write_csv(windows_metadata, "../Data/ML_input/metadata_replicate1_b2.csv")
+write_csv(windows_profile_test, "../Data/ML_input/profiles_replicate1_b2_test.csv")
+write_csv(windows_metadata_test, "../Data/ML_input/metadata_replicate1_b2_test.csv")
+write_csv(windows_profile_train, "../Data/ML_input/profiles_replicate1_b2_train.csv")
+write_csv(windows_metadata_train, "../Data/ML_input/metadata_replicate1_b2_train.csv")
 ```
 
 
