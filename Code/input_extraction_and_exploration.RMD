@@ -69,8 +69,7 @@ GenomicRanges::reduce(ATAC_granges_peaks)
 report_time_execution <- function(fun){
   start_time <- Sys.time()
   output <- fun
-  end_time <- Sys.time()
-  print(end_time - start_time)
+  print(Sys.time() - start_time)
 return(output)
 }
 
