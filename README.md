@@ -19,5 +19,5 @@ This is the repository for Stefano project and thesis
     - Thesis contract
     - Split train into train and validation for tuning
     - Assess pos profiles filtering, negative ranges extraction
-    - Perform SVM and lightGBVM hyperparameter tuning
+    - Perform SVM and lightGBM hyperparameter tuning
 
