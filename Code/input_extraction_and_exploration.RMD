@@ -16,6 +16,23 @@ library(reshape2)
 library(RColorBrewer)
 ```
 
+
+# Pool different time 0 replicates
+
+```{bash eval=FALSE}
+# Sort bed file by chr and start position
+cat A.bed B.bed .. | sort -k1,1 -k2,2n | mergeBed > AB.bed
+
+# Merge the bed files (they need to be sorted by chr first and then start position) 
+# Take into account the strand (-s), merge only overlapping position (-d -1)
+# Sum the score and report the strand (-c 5,6)
+bedtools merge -i AFKS_head_sorted.bed -s -d -1 -c 5,6 -o sum,distinct
+
+# One-line command
+cat *.bed | sort -k1,1 -k2,2n | bedtools merge -s -d -1 -c 5,6 -o sum,distinct > merged_ctss_timepoint_0.bed
+```
+
+
 ```{r}
 # Load data
 ATAC_granges <- import("../Data/ATAC_idr.optimal_peak.narrowPeak.gz", format="gz")
@@ -383,6 +400,20 @@ windows_score_by_pos_by_chr
 ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_posFiltered.png", 
      windows_score_by_pos_by_chr, 
      height = 7, width = 10, dpi = 300) 
+
+# Free axis
+windows_score_distribution_by_pos_all_chr %>% 
+  ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+  labs(title = paste("Positive set CAGE score distribution over ATAC-Seq peaks relative position (", krows, "k)", sep=""),    
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+  facet_wrap(~factor(chr,
+                     levels = paste("chr", c(1:22, "X", "Y"), sep="")),
+             scales="free") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
+windows_score_by_pos_by_chr
+ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_posFiltered_freeAxis.png", 
+     windows_score_by_pos_by_chr, 
+     height = 7, width = 12, dpi = 300) 
 ```
 
 ## Exploration of different chromosomes profiles
@@ -393,7 +424,7 @@ plot_set_profiles <- function(windows,
                              chr,
                              details = FALSE,
                              title = "",
-                             ylim = c(-50, 50), 
+                             ylim = c(-50, 50), scales = "fixed",
                              range = 1:56, sort = FALSE,
                              save = FALSE, filename = "set_profiles.png"){
   windows_profile <- windows$profiles[windows$metadata$chr == chr,]
@@ -420,17 +451,17 @@ plot_set_profiles <- function(windows,
   temp$variable <- as.numeric(gsub("\\D", "", temp$variable)) - 251
   # Plot
   temp %>% ggplot(aes(x = variable, y = value, color = strand)) + geom_line() + 
-    facet_wrap(~window, ncol = 8, strip.position = "left") +
+    facet_wrap(~window, ncol = 8, strip.position = "left", scales = scales) +
     coord_cartesian(ylim = ylim) +
     labs(title = paste("Windows profiles (", 
                        deparse(substitute(range)), ", ", chr, ")", sep = ""), 
          y = "TSS score",
          x = "Relative position to ATAC-Seq mid peak",
-         fill = NA) +
+         fill = NA) + 
     theme_bw() -> plot
   ggsave(paste("../Plots/input_exploration/", filename, sep=""), 
          plot, 
-         height = 9, width = 16, dpi = 300) 
+         height = 9, width = 20, dpi = 300) 
   return(plot)
 }
 
@@ -440,6 +471,14 @@ plot_set_profiles(pos_windows_filtered, chr="chr11", sort=TRUE, save=TRUE, filen
 plot_set_profiles(pos_windows_filtered, chr="chr2", sort=TRUE, save=TRUE, filename="profiles4_posFiltered.png") 
 plot_set_profiles(pos_windows_filtered, chr="chr3", sort=TRUE, save=TRUE, filename="profiles5_posFiltered.png") 
 plot_set_profiles(pos_windows_filtered, chr="chr4", sort=TRUE, save=TRUE, filename="profiles6_posFiltered.png") 
+
+# Free axis
+plot_set_profiles(pos_windows_filtered, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles1_posFiltered_freeAxis.png") 
+plot_set_profiles(pos_windows_filtered, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles2_posFiltered_freeAxis.png") 
+plot_set_profiles(pos_windows_filtered, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles3_posFiltered_freeAxis.png") 
+plot_set_profiles(pos_windows_filtered, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles4_posFiltered_freeAxis.png") 
+plot_set_profiles(pos_windows_filtered, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles5_posFiltered_freeAxis.png") 
+plot_set_profiles(pos_windows_filtered, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles6_posFiltered_freeAxis.png") 
 ```
 
 
@@ -762,7 +801,22 @@ windows_score_distribution_by_pos_all_chr %>%
   facet_wrap(~factor(chr,
                      levels = paste("chr", c(1:22, "X", "Y"), sep=""))) +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
+windows_score_by_pos_by_chr
 ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_negSampled.png", 
+     windows_score_by_pos_by_chr, 
+     height = 7, width = 10, dpi = 300) 
+
+# Free axis
+windows_score_distribution_by_pos_all_chr %>% 
+  ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+  labs(title = paste("Negative set CAGE score distribution over ATAC-Seq peaks relative position (", krows, "k)", sep=""),
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+  facet_wrap(~factor(chr,
+                     levels = paste("chr", c(1:22, "X", "Y"), sep="")),
+             scales="free") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
+windows_score_by_pos_by_chr
+ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_negSampled_freeAxis.png", 
      windows_score_by_pos_by_chr, 
      height = 7, width = 10, dpi = 300) 
 ```
@@ -776,20 +830,214 @@ plot_set_profiles(neg_windows_sampled, chr="chr11", sort=TRUE, save=TRUE, filena
 plot_set_profiles(neg_windows_sampled, chr="chr2", sort=TRUE, save=TRUE, filename="profiles4_negSampled.png") 
 plot_set_profiles(neg_windows_sampled, chr="chr3", sort=TRUE, save=TRUE, filename="profiles5_negSampled.png") 
 plot_set_profiles(neg_windows_sampled, chr="chr4", sort=TRUE, save=TRUE, filename="profiles6_negSampled.png") 
+
+# Free axis
+plot_set_profiles(neg_windows_sampled, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles1_negSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles2_negSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles3_negSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles4_negSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles5_negSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles6_negSampled_freeAxis.png") 
 ```
 
-# Pool different time 0 replicates
 
-```{bash eval=FALSE}
-# Sort bed file by chr and start position
-cat A.bed B.bed .. | sort -k1,1 -k2,2n | mergeBed > AB.bed
+## Exploration of the negative set sampled from filtered negative profiles (B, shuffling 1290k ranges without overlaps, filtering by CAGE requirement, sampling) 
 
-# Merge the bed files (they need to be sorted by chr first and then start position) 
-# Take into account the strand (-s), merge only overlapping position (-d -1)
-# Sum the score and report the strand (-c 5,6)
-bedtools merge -i AFKS_head_sorted.bed -s -d -1 -c 5,6 -o sum,distinct
+### Filtering and sampling
 
-# One-line command
-cat *.bed | sort -k1,1 -k2,2n | bedtools merge -s -d -1 -c 5,6 -o sum,distinct > merged_ctss_timepoint_0.bed
+```{r}
+# Filter the negative profiles by CAGE signal 
+neg_windows_filtered_atleast_2_sum <- windows_profiles_filter(neg_windows, fun = sum)
+neg_windows_filtered <- windows_profiles_filter(neg_windows)
+neg_windows_filtered_atleast_3_max <- windows_profiles_filter(neg_windows, threshold = 2)
+
+print(paste("Original windows number:", nrow(neg_windows$profiles)))
+print(paste("N. windows after filtering (at least 2 reads in total):", nrow(neg_windows_filtered_atleast_2_sum$profiles)))
+print(paste("N. windows after filtering (at least a TSS with 2 reads):", nrow(neg_windows_filtered$profiles)))
+print(paste("N. windows after filtering (at least a TSS with 3 reads):", nrow(neg_windows_filtered_atleast_3_max$profiles)))
+
+# Sampling
+neg_windows_filtered_sampled <- windows_sampling(neg_windows_filtered, size=nrow(pos_windows_filtered$metadata))
 ```
+
+### Filtered negative set exploration
+
+```{r}
+# Check
+rows = nrow(neg_windows_filtered_sampled$metadata)
+paste("Extracted profiles:", rows)
+krows <- round(rows/1000)
+
+
+## Explore the resulting profiles
+
+# Chr distribution
+plot_chr_distribution(neg_windows_filtered_sampled$metadata, paste("Chr distribution (Negative windows ", krows, "k)", sep=""), 
+                      save=TRUE, filename="chr_distribution_negFilteredSampled.png")
+
+# Plot the distribution of CAGE coverage for ATAC-Seq peak relative positions
+cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(neg_windows_filtered_sampled$profiles)
+
+cage_distribution_by_peak_position %>% ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+ # facet_zoom(ylim=c(-3000, 1000), shrink = FALSE) +
+  labs(title = "CAGE score distribution over ATAC-Seq peaks relative position (All chr)",  
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+   scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw() -> plot_cage_by_peak_pos
+plot_cage_by_peak_pos
+ggsave("../Plots/input_exploration/cage_by_peak_pos_negFilteredSampled.png", 
+       plot_cage_by_peak_pos, 
+       height = 5, dpi = 300) 
+
+# Plot distribution of ATAC-Seq peaks CAGE total coverage 
+windows_total_cage_score_distribution <- get_windows_total_cage_score_distribution(neg_windows_filtered_sampled$profiles)
+windows_total_cage_score_distribution
+windows_total_cage_score_distribution %>% arrange(desc(total_score))
+
+# Focus on ATAC-Seq peaks number
+windows_total_cage_score_distribution %>% filter(total_score < 50) %>% 
+  ggplot(aes(x = total_score, y = n_atac_peaks)) + 
+  geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[5]) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
+  labs(title = "Windows profiles total score distribution", 
+       y = "N. Windows profiles",
+       x = "Total CAGE score",
+       fill = NA) +
+  theme_bw() +
+  theme(legend.position = "none") -> windows_total_cage_score_plot1
+windows_total_cage_score_plot1
+ggsave("../Plots/input_exploration/windows_total_cage_score1_negFilteredSampled.png", 
+       windows_total_cage_score_plot1, 
+       height = 5, dpi = 300) 
+
+# Focus on CAGE total coverage per peak
+windows_total_cage_score_distribution %>% mutate(type = "Windows profiles") %>% 
+  ggplot(aes(x = type, y = total_score)) + geom_violin(fill= brewer.pal(8,"Greys")[3]) +
+  geom_jitter(aes(size = n_atac_peaks, col = n_atac_peaks), alpha=0.5) + theme_bw() +
+  labs(title = "Windows profiles total score distribution", 
+     x = NA,
+     y = "Total CAGE score",
+     size = "N. Windows profiles",
+     col = "") +
+  facet_zoom(ylim=c(0, 1000), shrink = FALSE) +
+  scale_colour_gradientn(colours = c("blue", "red"), values = c(0, 0.5, 1)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  theme(axis.title.x=element_blank()) -> windows_total_cage_score_plot2
+windows_total_cage_score_plot2
+ggsave("../Plots/input_exploration/windows_total_cage_score2_negFilteredSampled.png", 
+       windows_total_cage_score_plot2, 
+       height = 5, dpi = 300) 
+
+# Plot the maximum tss score of each window
+max_tss_score_distribution <- neg_windows_filtered_sampled$profiles %>% 
+  mutate(atac_start = neg_windows_filtered_sampled$metadata$atac_start) %>%         
+  mutate(max_tss_score = apply(neg_windows_filtered_sampled$profiles, 1, max)) %>% 
+  select(atac_start, max_tss_score) %>% group_by(max_tss_score) %>% count()
+
+max_tss_score_distribution
+
+max_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red")) + 
+  geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[3]) + 
+  facet_zoom(ylim=c(0, 60), shrink = FALSE) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
+  coord_cartesian(xlim = c(0, 50)) +
+  labs(title = "Max TSS score distribution", 
+       y = "N. windows profiles",
+       x = "Max TSS score",
+       fill = NA) +
+  theme_bw() +
+  theme(legend.position = "none") -> max_tss_score_plot
+max_tss_score_plot
+ggsave("../Plots/input_exploration/max_tss_score_plot_negFilteredSampled.png", 
+       max_tss_score_plot, 
+       height = 4.5, dpi = 300) 
+```
+
+
+```{r}
+# Plot different chromosomes score distribution
+windows_score_distribution_by_pos_all_chr <-   
+  get_score_distribution_by_pos_all_chr(neg_windows_filtered_sampled)
+  
+windows_score_distribution_by_pos_all_chr %>% 
+  ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+  labs(title = paste("Negative set CAGE score distribution over ATAC-Seq peaks relative position (", krows, "k)", sep=""),
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+  coord_cartesian(ylim = c(-1000, 1000)) +
+  facet_wrap(~factor(chr,
+                     levels = paste("chr", c(1:22, "X", "Y"), sep=""))) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
+windows_score_by_pos_by_chr
+ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_negFilteredSampled.png", 
+     windows_score_by_pos_by_chr, 
+     height = 7, width = 10, dpi = 300) 
+
+# Free axis
+windows_score_distribution_by_pos_all_chr %>% 
+  ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+  labs(title = paste("Negative set CAGE score distribution over ATAC-Seq peaks relative position (", krows, "k)", sep=""),
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+  facet_wrap(~factor(chr,
+                     levels = paste("chr", c(1:22, "X", "Y"), sep="")),
+             scales="free") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
+windows_score_by_pos_by_chr
+ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_negFilteredSampled_freeAxis.png", 
+     windows_score_by_pos_by_chr, 
+     height = 7, width = 10, dpi = 300) 
+```
+
+
+```{r}
+# Plot some profiles
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr1", sort=TRUE, save=TRUE, filename="profiles1_negFilteredSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr6", sort=TRUE, save=TRUE, filename="profiles2_negFilteredSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr11", sort=TRUE, save=TRUE, filename="profiles3_negFilteredSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr2", sort=TRUE, save=TRUE, filename="profiles4_negFilteredSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr3", sort=TRUE, save=TRUE, filename="profiles5_negFilteredSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr4", sort=TRUE, save=TRUE, filename="profiles6_negFilteredSampled.png") 
+
+# Free axis
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles1_negFilteredSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles2_negFilteredSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles3_negFilteredSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles4_negFilteredSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles5_negFilteredSampled_freeAxis.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles6_negFilteredSampled_freeAxis.png") 
+```
+
+
+```{r}
+## Export data for ML feeding
+
+# Merge positive and negative examples
+windows_profile <- rbind(mutate(pos_windows_filtered$profiles, label = 1), 
+                         mutate(neg_windows_filtered_sampled$profiles, label = 0))
+windows_metadata <- rbind(mutate(pos_windows_filtered$metadata, label = 1), 
+                          mutate(neg_windows_filtered_sampled$metadata, label = 0))
+
+# Shuffle the data
+index <- sample(nrow(windows_profile))
+windows_profile <- windows_profile[index,]
+windows_metadata <- windows_metadata[index,]
+
+paste("Size windows profile", nrow(windows_profile))
+paste("Size positive windows profile (filtered)", nrow(pos_windows_filtered$profile))
+paste("Size negative windows profile (filtered and sampled)", nrow(neg_windows_filtered_sampled$profile))
+
+# Divide train and test by chr
+test_index <- windows_metadata$chr %in% c("chr2", "chr3", "chr4")
+windows_profile_test <- windows_profile[test_index,]
+windows_metadata_test <- windows_metadata[test_index,]
+windows_profile_train <- windows_profile[!test_index,]
+windows_metadata_train <- windows_metadata[!test_index,]
+
+# Export
+write_csv(windows_profile, "../Data/ML_input/profiles_all_replicate_negfiltered.csv")
+write_csv(windows_metadata, "../Data/ML_input/metadata_all_replicate_negfiltered.csv")
+write_csv(windows_profile_test, "../Data/ML_input/profiles_all_replicate_negfiltered_test.csv")
+write_csv(windows_metadata_test, "../Data/ML_input/metadata_all_replicate_negfiltered_test.csv")
+write_csv(windows_profile_train, "../Data/ML_input/profiles_all_replicate_negfiltered_train.csv")
+write_csv(windows_metadata_train, "../Data/ML_input/metadata_all_replicate_negfiltered_train.csv")
+```
+
 
