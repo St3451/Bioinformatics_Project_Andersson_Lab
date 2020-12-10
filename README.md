@@ -15,8 +15,4 @@ This is the repository for Stefano project and thesis
 
 ## Week 4
 * Implemented profiles extraction using all replicates
-* To do: 
-    - Split train into train and validation for tuning
-    - Assess pos profiles filtering, negative ranges extraction
-    - Perform SVM and lightGBM hyperparameter tuning
 
