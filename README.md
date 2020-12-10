@@ -15,7 +15,4 @@ This is the repository for Stefano project and thesis
 
 ## Week 4
 * Implemented profiles extraction using all replicates
-* Implemented cross validation
-* Implemented two SVM RBF models: SVR + logistic regression and SVC
-* Assessed profile extraction and models performance on new input data (filtered negative set)
 
