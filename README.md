@@ -23,6 +23,6 @@ This is the repository for Stefano project and thesis
 ## Week 5
 * Implemented cross validation by chromosomes
 * Increased the size of the negative set (positive to negative ratio is now 1/3)
-* Added Matthews correlation coefficient (removed RMSE), classification report heatmap, ROC in log scale, precision-recall curve
+* Improved evaluation
 * Fixed confusion matrix
 * Assess the meaningfulness of the new input
