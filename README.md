@@ -26,4 +26,3 @@ This is the repository for Stefano project and thesis
 * Added Matthews correlation coefficient (removed RMSE), classification report heatmap, ROC in log scale, precision-recall curve
 * Fixed confusion matrix
 * Assess the meaningfulness of the new input
-
