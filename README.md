@@ -17,4 +17,12 @@ This is the repository for Stefano project and thesis
 * Implemented profiles extraction using all replicates
 * Implemented cross validation
 * Implemented two SVM RBF models: SVR + logistic regression and SVC
-* Assessed profile extraction and models performance on new input data (filtered negative set)
+* Modified input data by filtering the negative set
+* Assessed profile extraction and models performance on new input data
+
+## Week 5
+* Implemented cross validation by chromosomes
+* Increased the size of the negative set (positive to negative ratio is now 1/3)
+* Added Matthews correlation coefficient (removed RMSE), classification report heatmap, ROC in log scale, precision-recall curve
+* Fixed confusion matrix
+* Assess the meaningfulness of the new input
