@@ -24,5 +24,4 @@ This is the repository for Stefano project and thesis
 * Implemented cross validation by chromosomes
 * Increased the size of the negative set (positive to negative ratio is now 1/3)
 * Improved evaluation
-* Fixed confusion matrix
 * Assess the meaningfulness of the new input
