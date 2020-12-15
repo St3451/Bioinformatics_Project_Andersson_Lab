@@ -22,7 +22,8 @@ This is the repository for Stefano project and thesis
 
 ## Week 5
 * Implemented cross validation by chromosomes
-* Increased the size of the negative set (positive to negative ratio is now 1/3)
-* Added Matthews correlation coefficient (removed RMSE), classification report heatmap, ROC in log scale, precision-recall curve
-* Fixed confusion matrix
+* Tested the effect of increasing the size of the negative set 
+* Improved evaluation
+* Implemented removal of intra ATAC overlaps by rank (total CAGE scpre) approach 
 * Assess the meaningfulness of the new input
+* Tested the effect of using different filters on the negative set
