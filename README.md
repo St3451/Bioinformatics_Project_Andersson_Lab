@@ -22,6 +22,8 @@ This is the repository for Stefano project and thesis
 
 ## Week 5
 * Implemented cross validation by chromosomes
-* Increased the size of the negative set (positive to negative ratio is now 1/3)
+* Tested the effect of increasing the size of the negative set 
 * Improved evaluation
+* Implemented removal of intra ATAC overlaps by rank (total CAGE scpre) approach 
 * Assess the meaningfulness of the new input
+
