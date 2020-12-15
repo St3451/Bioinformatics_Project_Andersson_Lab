@@ -58,26 +58,17 @@ ranges(ATAC_granges_peaks)
 ATAC_granges_peaks
 ```
 
+## Remove blacklist overlapping regions
+
 ```{r}
-# Remove overlapping regions
-ATAC_peaks_filtered <- rownames_to_column(as.data.frame(ATAC_granges_peaks)) %>% 
-  as_tibble() %>% mutate(overlaps = countOverlaps(ATAC_granges_peaks)) %>% 
-  filter(overlaps==1)
-ATAC_peaks_filtered
+# Load blacklist and remove overlapping ATAC regions
+blacklist_new <- import("../Data/hg38.blacklist_new.bed", format="bed")
 
-ATAC_granges_peaks_filtered <- ATAC_granges_peaks[as.numeric(ATAC_peaks_filtered$rowname)]
-ATAC_granges_peaks_filtered
-ranges(ATAC_granges_peaks_filtered)
-
-length(ATAC_granges)
-length(ATAC_granges_peaks_filtered)
-
-# Get number of windows for each chr
-table(seqnames(ATAC_granges_peaks_filtered))
-
-# Alternatively I can collpase overlapping ranges
-GenomicRanges::reduce(ATAC_granges_peaks)
+overlapping_blacklist <- queryHits(findOverlaps(ATAC_granges_peaks, blacklist_new))
+paste("There are", length(overlapping_blacklist), "ATAC ranges overlapping the blacklist")
+ATAC_granges_peaks <- ATAC_granges_peaks[-overlapping_blacklist]
 ```
+
 
 ## Extract the windows profile
 
@@ -90,7 +81,7 @@ report_time_execution <- function(fun){
 return(output)
 }
 
-# Return score if the position in present, 0 otherwise
+# Return score if the position is present, 0 otherwise
 get_count_vector <- function(pos, df){
   if (pos %in% df$atac_relative_pos) {
   return(df$score[which(df$atac_relative_pos == pos)])
@@ -111,7 +102,6 @@ get_chr_windows_profiles <- function(cage_granges, atac_granges, chr){
   atac_granges <- atac_granges[seqnames(atac_granges) == chr]
   # Add all information into one df
   overlaps <- findOverlaps(cage_granges, atac_granges)                   # Index of overlapping CAGE fragment
-  length(overlaps)  
   # Check if there are ATAC positive windows overlapping CAGE data
   if (length(overlaps) > 0){                                                   
     df <- cage_granges[queryHits(overlaps)]                              # Keep only overlapping CAGE data
@@ -126,8 +116,7 @@ get_chr_windows_profiles <- function(cage_granges, atac_granges, chr){
     profiles <- data.frame(do.call(rbind, profiles))
     colnames(profiles) <- c(paste("Plus_", 1:501, sep = ""), paste("Minus_", 1:501, sep = ""))
     # Add metadata information
-    profiles <- profiles %>% mutate(# atac_index = sort(unique(subjectHits(overlaps))),
-                                    atac_start = start(atac_granges[as.numeric(rownames(profiles))]),
+    profiles <- profiles %>% mutate(atac_start = start(atac_granges[as.numeric(rownames(profiles))]),
                                     chr = chr) %>% relocate(c(chr, atac_start), .before = Plus_1) 
     return(profiles)
   } 
@@ -151,11 +140,63 @@ get_windows_profiles <- function(cage_granges, atac_granges){
   return(output_list)
 }
 
-pos_windows <- report_time_execution(get_windows_profiles(CAGE_granges, 
-                                                          ATAC_granges_peaks_filtered))
-rows = nrow(pos_windows$metadata)
-rows
+atac_windows <- report_time_execution(get_windows_profiles(CAGE_granges, 
+                                                           ATAC_granges_peaks))
+rows = nrow(atac_windows$metadata)
+paste("Extracted profiles:", rows)
 krows <- round(rows/1000)
+```
+
+## Rank approach to remove intra overlapping ATAC 
+
+```{r}
+## Compute some measure of the rank and use it to remove the overlaps: total cage score (1), max TSS score (2)
+
+# The following function take as input the indexes of overlapping ranges and 
+# it returns the index of the ranges with largest total score
+get_index_largest_score <- function(ranges_indexes, metadata){
+  clash_total_score <- sapply(ranges_indexes, function(x) 
+    metadata$total_score[x])
+  return(ranges_indexes[which.max(clash_total_score)])
+} 
+
+# The following function remove the overlaps keeping the range with highest rank (large score)
+# It takes the output of findoverlaps and for each range it return the index of the overlapping 
+# range with largest score
+
+remove_overlaps_by_rank <- function(windows){
+  # Add measures of rank
+  metadata_granges <- GRanges(seqnames = windows$metadata$chr, 
+                              ranges = IRanges(start = windows$metadata$atac_start, width = 501))
+  windows$metadata <- windows$metadata %>% mutate(total_score = apply(windows$profiles, 1, sum),
+                                                  max_score = apply(windows$profiles, 1, max))
+  # Get index largest score by overlaps
+  overlaps <- as.data.frame(findOverlaps(metadata_granges))
+  top_rank_index <- by(overlaps, INDICES = overlaps$queryHits, 
+                 function(x){
+                   get_index_largest_score(x$subjectHits, windows$metadata)})
+  top_rank_index <- unique(do.call(cbind, list(top_rank_index)))
+  # Keep only ranges with highest rank 
+  windows$profiles <- windows$profiles[top_rank_index,]
+  windows$metadata <- windows$metadata[top_rank_index,]
+  return(windows)
+}
+
+pos_windows <- report_time_execution(remove_overlaps_by_rank(atac_windows))
+
+rows = nrow(pos_windows$metadata)
+paste("Extracted profiles after removing overlaps by ranks:", rows)
+krows <- round(rows/1000)
+
+# Filter by minimal CAGE requirement (TSS with atleast 2)
+pos_windows$profiles <- pos_windows$profiles[pos_windows$metadata$max_score >= 2,]
+pos_windows$metadata <- pos_windows$metadata[pos_windows$metadata$max_score >= 2,] %>% select(-total_score, -max_score)
+
+rows = nrow(pos_windows$metadata)
+paste("Extracted profiles after CAGE filtering:", rows)
+krows <- round(rows/1000)
+
+pos_windows$metadata
 ```
 
 ## Exploration of the obtained profiles
@@ -184,7 +225,8 @@ plot_chr_distribution <- function(window_metadata,
 }
 
 plot_chr_distribution(pos_windows$metadata, 
-                      paste("Chr distribution (Positive windows ", krows, "k)", sep=""))
+                      paste("Chr distribution (Positive windows ", krows, "k)", sep=""),
+                      save=TRUE, filename="positive_set/chr_distribution_posFiltered.png")
 
 # Plot the distribution of CAGE coverage for ATAC-Seq peak relative positions
 get_cage_distribution_by_peak_position <- function(peaks_profile_df){
@@ -198,7 +240,11 @@ cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(pos
 cage_distribution_by_peak_position %>% ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
   labs(title = "CAGE score distribution over ATAC-Seq peaks relative position (All chr)",  
        x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
-   scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw()
+   scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw() -> plot_cage_by_peak_pos
+plot_cage_by_peak_pos
+ggsave("../Plots/input_exploration/positive_set/cage_by_peak_pos_posFiltered.png", 
+       plot_cage_by_peak_pos, 
+       height = 5, dpi = 300) 
 
 # Plot distribution of ATAC-Seq peaks CAGE total coverage 
 get_windows_total_cage_score_distribution <- function(peaks_profile_df){
@@ -222,106 +268,9 @@ windows_total_cage_score_distribution %>% filter(total_score < 50) %>%
        x = "Total CAGE score",
        fill = NA) +
   theme_bw() +
-  theme(legend.position = "none")
-
-# Focus on CAGE total coverage per peak
-windows_total_cage_score_distribution %>% mutate(type = "Windows profiles") %>% 
-  ggplot(aes(x = type, y = total_score)) + geom_violin(fill= brewer.pal(8,"Greys")[3]) +
-  geom_jitter(aes(size = n_atac_peaks, col = n_atac_peaks), alpha=0.5) + theme_bw() +
-  labs(title = "Windows profiles total score distribution", 
-     x = NA,
-     y = "Total CAGE score",
-     size = "N. Windows profiles",
-     col = "") +
-  facet_zoom(ylim=c(0, 10000), shrink = FALSE) +
-  scale_colour_gradientn(colours = c("blue", "red"), values = c(0, 0.5, 1)) +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
-  theme(axis.title.x=element_blank())
-
-# Plot the maximum tss score of each window
-max_tss_score_distribution <- rownames_to_column(pos_windows$profiles, var = "atac_start") %>% 
-  mutate(max_tss_score = apply(pos_windows$profiles, 1, max)) %>% 
-  select(atac_start, max_tss_score) %>% group_by(max_tss_score) %>% count()
-
-max_tss_score_distribution
-
-max_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red")) + 
-  geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[3]) + 
-  facet_zoom(ylim=c(0, 60), shrink = FALSE) +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
-  coord_cartesian(xlim = c(0, 50)) +
-  labs(title = "Max TSS score distribution", 
-       y = "N. windows profiles",
-       x = "Max TSS score",
-       fill = NA) +
-  theme_bw() +
-  theme(legend.position = "none")
-```
-
-## Positive windows filtering and exploration
-
-```{r}
-## Positive set filtering
-
-# Try different filters and observe the resulting profiles
-windows_profiles_filter <- function(windows,
-                                    threshold = 1, fun = max){
-  filter <- apply(windows$profiles, 1, fun) > threshold
-    windows$profiles <-  windows$profile[filter,]
-    windows$metadata <- windows$metadata[filter,]
-  return(windows)
-}
-
-pos_windows_filtered_atleast_2_sum <- windows_profiles_filter(pos_windows, fun = sum)
-pos_windows_filtered <- windows_profiles_filter(pos_windows)
-pos_windows_filtered_atleast_3_max <- windows_profiles_filter(pos_windows, threshold = 2)
-
-print(paste("Original windows number:", nrow(pos_windows$profiles)))
-print(paste("N. windows after filtering (at least 2 reads in total):", nrow(pos_windows_filtered_atleast_2_sum$profiles)))
-print(paste("N. windows after filtering (at least a TSS with 2 reads):", nrow(pos_windows_filtered$profiles)))
-print(paste("N. windows after filtering (at least a TSS with 3 reads):", nrow(pos_windows_filtered_atleast_3_max$profiles)))
-
-rows = nrow(pos_windows_filtered$metadata)
-rows
-krows <- round(rows/1000)
-
-## Plot after filtering
-
-# Chr distribution
-plot_chr_distribution(pos_windows_filtered$metadata, 
-                      paste("Chr distribution (Positive windows ", krows, "k)", sep=""), 
-                      save=TRUE, filename="chr_distribution_posFiltered.png")
-
-# Score distribution
-cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(pos_windows_filtered$profiles)
-
-cage_distribution_by_peak_position %>% ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
-  labs(title = "CAGE score distribution over ATAC-Seq peaks relative position (All chr)",  
-       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
-   scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw() -> plot_cage_by_peak_pos
-plot_cage_by_peak_pos
-ggsave("../Plots/input_exploration/cage_by_peak_pos_posFiltered.png", 
-       plot_cage_by_peak_pos, 
-       height = 5, dpi = 300) 
-
-# Plot distribution of ATAC-Seq peaks CAGE total coverage 
-windows_total_cage_score_distribution <- get_windows_total_cage_score_distribution(pos_windows_filtered$profiles)
-windows_total_cage_score_distribution
-windows_total_cage_score_distribution %>% arrange(desc(total_score))
-
-# Focus on ATAC-Seq peaks number
-windows_total_cage_score_distribution %>% filter(total_score < 50) %>% 
-  ggplot(aes(x = total_score, y = n_atac_peaks)) + 
-  geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[5]) + 
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
-  labs(title = "Windows profiles total score distribution", 
-       y = "N. Windows profiles",
-       x = "Total CAGE score",
-       fill = NA) +
-  theme_bw() +
   theme(legend.position = "none") -> windows_total_cage_score_plot1
 windows_total_cage_score_plot1
-ggsave("../Plots/input_exploration/windows_total_cage_score1_posFiltered.png", 
+ggsave("../Plots/input_exploration/positive_set/windows_total_cage_score1_posFiltered.png", 
        windows_total_cage_score_plot1, 
        height = 5, dpi = 300) 
 
@@ -334,25 +283,25 @@ windows_total_cage_score_distribution %>% mutate(type = "Windows profiles") %>%
      y = "Total CAGE score",
      size = "N. Windows profiles",
      col = "") +
-  facet_zoom(ylim=c(0, 10000), shrink = FALSE) +
+  facet_zoom(ylim=c(0, 250000), shrink = FALSE) +
   scale_colour_gradientn(colours = c("blue", "red"), values = c(0, 0.5, 1)) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
   theme(axis.title.x=element_blank()) -> windows_total_cage_score_plot2
 windows_total_cage_score_plot2
-ggsave("../Plots/input_exploration/windows_total_cage_score2_posFiltered.png", 
+ggsave("../Plots/input_exploration/positive_set/windows_total_cage_score2_posFiltered.png", 
        windows_total_cage_score_plot2, 
        height = 5, dpi = 300) 
 
 # Plot the maximum tss score of each window
-max_tss_score_distribution <- pos_windows_filtered$profiles %>% 
-  mutate(atac_start = pos_windows_filtered$metadata$atac_start) %>%         
-  mutate(max_tss_score = apply(pos_windows_filtered$profiles, 1, max)) %>% 
+max_tss_score_distribution <- rownames_to_column(pos_windows$profiles, var = "atac_start") %>% 
+  mutate(max_tss_score = apply(pos_windows$profiles, 1, max)) %>% 
   select(atac_start, max_tss_score) %>% group_by(max_tss_score) %>% count()
+
 max_tss_score_distribution
 
 max_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red")) + 
   geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[3]) + 
-  facet_zoom(ylim=c(0, 60), shrink = FALSE) +
+  facet_zoom(ylim=c(0, 500), shrink = FALSE) +
   scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
   coord_cartesian(xlim = c(0, 50)) +
   labs(title = "Max TSS score distribution", 
@@ -362,7 +311,7 @@ max_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red"
   theme_bw() +
   theme(legend.position = "none") -> max_tss_score_plot
 max_tss_score_plot
-ggsave("../Plots/input_exploration/max_tss_score_plot_posFiltered.png", 
+ggsave("../Plots/input_exploration/positive_set/max_tss_score_plot_posFiltered.png", 
        max_tss_score_plot, 
        height = 4.5, dpi = 300) 
 ```
@@ -386,18 +335,18 @@ get_score_distribution_by_pos_all_chr <- function(list_windows){
 }
 
 windows_score_distribution_by_pos_all_chr <-   
-  get_score_distribution_by_pos_all_chr(pos_windows_filtered)
-  
+  get_score_distribution_by_pos_all_chr(pos_windows)
+
 windows_score_distribution_by_pos_all_chr %>% 
   ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
-  labs(title = paste("Positive set CAGE score distribution over ATAC-Seq peaks relative position (", krows, "k)", sep=""),    
+  labs(title = paste("Positive set CAGE score distribution over ATAC-Seq peaks relative position (", krows, "k)", sep=""),
        x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
   coord_cartesian(ylim = c(-1000, 1000)) +
   facet_wrap(~factor(chr,
                      levels = paste("chr", c(1:22, "X", "Y"), sep=""))) +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
 windows_score_by_pos_by_chr
-ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_posFiltered.png", 
+ggsave("../Plots/input_exploration/positive_set/windows_score_by_pos_by_chr_posFiltered.png", 
      windows_score_by_pos_by_chr, 
      height = 7, width = 10, dpi = 300) 
 
@@ -411,7 +360,7 @@ windows_score_distribution_by_pos_all_chr %>%
              scales="free") +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
 windows_score_by_pos_by_chr
-ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_posFiltered_freeAxis.png", 
+ggsave("../Plots/input_exploration/positive_set/windows_score_by_pos_by_chr_posFiltered_freeAxis.png", 
      windows_score_by_pos_by_chr, 
      height = 7, width = 12, dpi = 300) 
 ```
@@ -465,21 +414,22 @@ plot_set_profiles <- function(windows,
   return(plot)
 }
 
-plot_set_profiles(pos_windows_filtered, chr="chr1", sort=TRUE, save=TRUE, filename="profiles1_posFiltered.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr6", sort=TRUE, save=TRUE, filename="profiles2_posFiltered.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr11", sort=TRUE, save=TRUE, filename="profiles3_posFiltered.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr2", sort=TRUE, save=TRUE, filename="profiles4_posFiltered.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr3", sort=TRUE, save=TRUE, filename="profiles5_posFiltered.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr4", sort=TRUE, save=TRUE, filename="profiles6_posFiltered.png") 
-
 # Free axis
-plot_set_profiles(pos_windows_filtered, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles1_posFiltered_freeAxis.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles2_posFiltered_freeAxis.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles3_posFiltered_freeAxis.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles4_posFiltered_freeAxis.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles5_posFiltered_freeAxis.png") 
-plot_set_profiles(pos_windows_filtered, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles6_posFiltered_freeAxis.png") 
+plot_set_profiles(pos_windows, chr="chr1", ylim=c(NA,NA), scales="free", sort=FALSE, save=TRUE, 
+                  filename="positive_set/profiles1_pos.png") 
+plot_set_profiles(pos_windows, chr="chr6", ylim=c(NA,NA), scales="free", sort=FALSE, save=TRUE, 
+                  filename="positive_set/profiles2_pos.png") 
+plot_set_profiles(pos_windows, chr="chr11", ylim=c(NA,NA), scales="free", sort=FALSE, save=TRUE, 
+                  filename="positive_set/profiles3_pos.png") 
+plot_set_profiles(pos_windows, chr="chr2", ylim=c(NA,NA), scales="free", sort=FALSE, save=TRUE, 
+                  filename="positive_set/profiles4_pos.png") 
+plot_set_profiles(pos_windows, chr="chr3", ylim=c(NA,NA), scales="free", sort=FALSE, save=TRUE, 
+                  filename="positive_set/profiles5_pos.png") 
+plot_set_profiles(pos_windows, chr="chr4", ylim=c(NA,NA), scales="free", sort=FALSE, save=TRUE, 
+                  filename="positive_set/profiles6_pos.png") 
 ```
+
+
 
 
 # Extract the negative set
@@ -487,38 +437,35 @@ plot_set_profiles(pos_windows_filtered, chr="chr4", ylim=c(NA,NA), scales="free"
 ## Export data and generate negative ranges by bedtools shuffle
 
 ```{r}
-# Export original atac data (before filtering them by overlaps) and positive set ranges
-positive_set_granges <- GRanges(seqnames = pos_windows_filtered$metadata$chr,
-                                ranges = IRanges(start = pos_windows_filtered$metadata$atac_start,
-                                                 width = 501))
+# Export original ATAC data (before filtering them by overlaps) 
 
-export(positive_set_granges, "../Data/pseudo_dreg_sets/positive_set_all_replicate.bed", format = "bed")
-
-# Duplicate 4 times the ATAC_peaks so to use as -i to generate more ranges with shuffle
+# Duplicate 6 times the ATAC_peaks so to use as -i to generate more ranges with shuffle
 ATAC_granges_duplicated <- GRanges(rbind(as.data.frame(ATAC_granges_peaks),
-                                         as.data.frame(shift(ATAC_granges_peaks, 1)),
-                                         as.data.frame(shift(ATAC_granges_peaks, 2)),
-                                         as.data.frame(shift(ATAC_granges_peaks, -1)),
-                                         as.data.frame(shift(ATAC_granges_peaks, -2))))
-export(ATAC_granges_duplicated, "../Data/atac_positive_all_granges_501_duplicatedX4.bed", format = "bed")
+                                         as.data.frame(ATAC_granges_peaks),
+                                         as.data.frame(ATAC_granges_peaks),
+                                         as.data.frame(ATAC_granges_peaks),
+                                         as.data.frame(ATAC_granges_peaks),
+                                         as.data.frame(ATAC_granges_peaks),
+                                         as.data.frame(ATAC_granges_peaks)))
+export(ATAC_granges_duplicated, "../Data/atac_positive_all_granges_501_duplicatedX6.bed", format = "bed")
 ```
 
 
 ```{bash eval=FALSE}
 # Generate negative set ranges (from pseudo_dreg directory) in such a way that:
 # - They will be the same size, num and strand proportion as atac positive granges, blacklist and atac positive granges will not be included, don't allow overlaps
-bedtools shuffle -i ../atac_positive_all_granges_501_duplicatedX4.bed -g ../hg38.bed -excl hg38-blacklist.v2.bed -excl ../atac_positive_all_granges_501.bed -noOverlapping > negative_set_replicate1_duplicateX4_noOverlaps.bed
+bedtools shuffle -i ../atac_positive_all_granges_501_duplicatedX6.bed -g ../hg38.bed -excl hg38.blacklist_new -excl ../atac_positive_all_granges_501.bed -noOverlapping > negative_set_duplicateX6_noOverlaps_v1.bed
 ```
 
 
-## Extraction and exploration of negative range profiles (B2, shuffling 1290k ranges without overlaps) (Best)
+## Extraction and exploration of negative range profiles (shuffling 1807k ranges without overlaps, new blacklist)
 
 ```{r}
 # Import negative set ranges and check for overlaps
-negative_set_granges <- import("../Data/pseudo_dreg_sets/negative_set_replicate1_duplicateX4_noOverlaps.bed", format = "bed")
+negative_set_granges <- import("../Data/pseudo_dreg_sets/negative_set_duplicateX6_noOverlaps_v3.bed", format = "bed")
 
 # Check for overlaps with ATAC positive regions and between granges in the same file
-findOverlaps(negative_set_granges, positive_set_granges)
+findOverlaps(negative_set_granges, ATAC_granges_peaks)
 paste("Ranges before extraction:", length(negative_set_granges))
 paste("Within overlaps:", sum(countOverlaps(negative_set_granges) > 1))
 
@@ -638,7 +585,7 @@ plot_set_profiles(neg_windows, chr = "chr4", sort=TRUE)
 
 
 
-# Export negative and positive set profiles and metadata
+# Sample negative set and export both negative and positive set profiles and metadata
 
 ```{r}
 # Sample from negative set
@@ -650,12 +597,12 @@ windows_sampling <- function(windows, size){
 }
 
 # Plot chr distribution
-plot_chr_distribution(pos_windows_filtered$metadata, paste("Chr distribution (Positive windows, ",
-                      round(nrow(pos_windows_filtered$metadata)/1000), "k)", sep = ""))
+plot_chr_distribution(pos_windows$metadata, paste("Chr distribution (Positive windows, ",
+                      round(nrow(pos_windows$metadata)/1000), "k)", sep = ""))
 plot_chr_distribution(neg_windows$metadata, paste("Chr distribution (Negative windows, ",
                       round(nrow(neg_windows$metadata)/1000), "k)", sep = ""))
 
-neg_windows_sampled <- windows_sampling(neg_windows, size=nrow(pos_windows_filtered$metadata))
+neg_windows_sampled <- windows_sampling(neg_windows, size=nrow(pos_windows$metadata))
 plot_chr_distribution(neg_windows_sampled$metadata, paste("Chr distribution (Negative windows sampled, ",
                       round(nrow(neg_windows_sampled$metadata)/1000), "k)", sep = ""))
 ```
@@ -664,9 +611,9 @@ plot_chr_distribution(neg_windows_sampled$metadata, paste("Chr distribution (Neg
 ## Export data for ML feeding
 
 # Merge positive and negative examples
-windows_profile <- rbind(mutate(pos_windows_filtered$profiles, label = 1), 
+windows_profile <- rbind(mutate(pos_windows$profiles, label = 1), 
                          mutate(neg_windows_sampled$profiles, label = 0))
-windows_metadata <- rbind(mutate(pos_windows_filtered$metadata, label = 1), 
+windows_metadata <- rbind(mutate(pos_windows$metadata, label = 1), 
                           mutate(neg_windows_sampled$metadata, label = 0))
 
 # Shuffle the data
@@ -675,7 +622,7 @@ windows_profile <- windows_profile[index,]
 windows_metadata <- windows_metadata[index,]
 
 paste("Size windows profile", nrow(windows_profile))
-paste("Size positive windows profile (filtered)", nrow(pos_windows_filtered$profile))
+paste("Size positive windows profile (filtered)", nrow(pos_windows$profile))
 paste("Size negative windows profile (sampled)", nrow(neg_windows_sampled$profile))
 
 # Divide train and test by chr
@@ -686,12 +633,12 @@ windows_profile_train <- windows_profile[!test_index,]
 windows_metadata_train <- windows_metadata[!test_index,]
 
 # Export
-write_csv(windows_profile, "../Data/ML_input/profiles_all_replicate_b2.csv")
-write_csv(windows_metadata, "../Data/ML_input/metadata_all_replicate_b2.csv")
-write_csv(windows_profile_test, "../Data/ML_input/profiles_all_replicate_b2_test.csv")
-write_csv(windows_metadata_test, "../Data/ML_input/metadata_all_replicate_b2_test.csv")
-write_csv(windows_profile_train, "../Data/ML_input/profiles_all_replicate_b2_train.csv")
-write_csv(windows_metadata_train, "../Data/ML_input/metadata_all_replicate_b2_train.csv")
+write_csv(windows_profile, "../Data/ML_input/profiles_rank_negNoFiltered_v2.csv")
+write_csv(windows_metadata, "../Data/ML_input/metadata_rank_negNoFiltered_v2.csv")
+write_csv(windows_profile_test, "../Data/ML_input/profiles_rank_negNoFiltered_v2_test.csv")
+write_csv(windows_metadata_test, "../Data/ML_input/metadata_rank_negNoFiltered_v2_test.csv")
+write_csv(windows_profile_train, "../Data/ML_input/profiles_rank_negNoFiltered_v2_train.csv")
+write_csv(windows_metadata_train, "../Data/ML_input/metadata_rank_negNoFiltered_v2_train.csv")
 ```
 
 
@@ -708,7 +655,7 @@ krows <- round(rows/1000)
 
 # Chr distribution
 plot_chr_distribution(neg_windows_sampled$metadata, paste("Chr distribution (Negative windows ", krows, "k)", sep=""), 
-                      save=TRUE, filename="chr_distribution_negSampled.png")
+                      save=TRUE, filename="negative_set_NoFiltered/chr_distribution_negSampled.png")
 
 # Plot the distribution of CAGE coverage for ATAC-Seq peak relative positions
 cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(neg_windows_sampled$profiles)
@@ -719,7 +666,7 @@ cage_distribution_by_peak_position %>% ggplot(aes(x = pos, y = score, color = st
        x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
    scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw() -> plot_cage_by_peak_pos
 plot_cage_by_peak_pos
-ggsave("../Plots/input_exploration/cage_by_peak_pos_negSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_NoFiltered/cage_by_peak_pos_negSampled.png", 
        plot_cage_by_peak_pos, 
        height = 5, dpi = 300) 
 
@@ -740,7 +687,7 @@ windows_total_cage_score_distribution %>% filter(total_score < 50) %>%
   theme_bw() +
   theme(legend.position = "none") -> windows_total_cage_score_plot1
 windows_total_cage_score_plot1
-ggsave("../Plots/input_exploration/windows_total_cage_score1_negSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_NoFiltered/windows_total_cage_score1_negSampled.png", 
        windows_total_cage_score_plot1, 
        height = 5, dpi = 300) 
 
@@ -758,7 +705,7 @@ windows_total_cage_score_distribution %>% mutate(type = "Windows profiles") %>%
   scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
   theme(axis.title.x=element_blank()) -> windows_total_cage_score_plot2
 windows_total_cage_score_plot2
-ggsave("../Plots/input_exploration/windows_total_cage_score2_negSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_NoFiltered/windows_total_cage_score2_negSampled.png", 
        windows_total_cage_score_plot2, 
        height = 5, dpi = 300) 
 
@@ -782,7 +729,7 @@ max_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red"
   theme_bw() +
   theme(legend.position = "none") -> max_tss_score_plot
 max_tss_score_plot
-ggsave("../Plots/input_exploration/max_tss_score_plot_negSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_NoFiltered/max_tss_score_plot_negSampled.png", 
        max_tss_score_plot, 
        height = 4.5, dpi = 300) 
 ```
@@ -802,7 +749,7 @@ windows_score_distribution_by_pos_all_chr %>%
                      levels = paste("chr", c(1:22, "X", "Y"), sep=""))) +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
 windows_score_by_pos_by_chr
-ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_negSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_NoFiltered/windows_score_by_pos_by_chr_negSampled.png", 
      windows_score_by_pos_by_chr, 
      height = 7, width = 10, dpi = 300) 
 
@@ -816,37 +763,45 @@ windows_score_distribution_by_pos_all_chr %>%
              scales="free") +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
 windows_score_by_pos_by_chr
-ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_negSampled_freeAxis.png", 
+ggsave("../Plots/input_exploration/negative_set_NoFiltered/windows_score_by_pos_by_chr_negSampled_freeAxis.png", 
      windows_score_by_pos_by_chr, 
      height = 7, width = 10, dpi = 300) 
 ```
 
 
 ```{r}
-# Plot some profiles
-plot_set_profiles(neg_windows_sampled, chr="chr1", sort=TRUE, save=TRUE, filename="profiles1_negSampled.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr6", sort=TRUE, save=TRUE, filename="profiles2_negSampled.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr11", sort=TRUE, save=TRUE, filename="profiles3_negSampled.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr2", sort=TRUE, save=TRUE, filename="profiles4_negSampled.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr3", sort=TRUE, save=TRUE, filename="profiles5_negSampled.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr4", sort=TRUE, save=TRUE, filename="profiles6_negSampled.png") 
-
-# Free axis
-plot_set_profiles(neg_windows_sampled, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles1_negSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles2_negSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles3_negSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles4_negSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles5_negSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_sampled, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles6_negSampled_freeAxis.png") 
+# Plot some profiles (free axis)
+plot_set_profiles(neg_windows_sampled, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_NoFiltered/profiles1_negSampled.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_NoFiltered/profiles2_negSampled.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_NoFiltered/profiles3_negSampled.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_NoFiltered/profiles4_negSampled.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_NoFiltered/profiles5_negSampled.png") 
+plot_set_profiles(neg_windows_sampled, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_NoFiltered/profiles6_negSampled.png") 
 ```
 
 
-## Exploration of the negative set sampled from filtered negative profiles (B, shuffling 1290k ranges without overlaps, filtering by CAGE requirement, sampling) 
+## Exploration of the negative set sampled from filtered negative profiles (shuffling 1807k ranges without overlaps, filtering by CAGE requirement (atleast 2 IN TOTAL), sampling) 
+
+To check for filtering or not filtering I could create different datasets unfiltered and different kind of filters, then I could fit a model on each dataset which will be tested on all others. I could choose the one that performs better on average.
 
 ### Filtering and sampling
 
 ```{r}
 # Filter the negative profiles by CAGE signal 
+windows_profiles_filter <- function(windows,
+                                    threshold = 1, fun = max){
+  filter <- apply(windows$profiles, 1, fun) > threshold
+    windows$profiles <-  windows$profile[filter,]
+    windows$metadata <- windows$metadata[filter,]
+  return(windows)
+}
+
 neg_windows_filtered_atleast_2_sum <- windows_profiles_filter(neg_windows, fun = sum)
 neg_windows_filtered <- windows_profiles_filter(neg_windows)
 neg_windows_filtered_atleast_3_max <- windows_profiles_filter(neg_windows, threshold = 2)
@@ -857,7 +812,7 @@ print(paste("N. windows after filtering (at least a TSS with 2 reads):", nrow(ne
 print(paste("N. windows after filtering (at least a TSS with 3 reads):", nrow(neg_windows_filtered_atleast_3_max$profiles)))
 
 # Sampling
-neg_windows_filtered_sampled <- windows_sampling(neg_windows_filtered, size=nrow(pos_windows_filtered$metadata))
+neg_windows_filtered_sampled <- windows_sampling(neg_windows_filtered_atleast_2_sum, size=nrow(pos_windows$metadata))
 ```
 
 ### Filtered negative set exploration
@@ -873,7 +828,7 @@ krows <- round(rows/1000)
 
 # Chr distribution
 plot_chr_distribution(neg_windows_filtered_sampled$metadata, paste("Chr distribution (Negative windows ", krows, "k)", sep=""), 
-                      save=TRUE, filename="chr_distribution_negFilteredSampled.png")
+                      save=TRUE, filename="negative_set_Filtered2total/chr_distribution_negFiltered2totalSampled.png")
 
 # Plot the distribution of CAGE coverage for ATAC-Seq peak relative positions
 cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(neg_windows_filtered_sampled$profiles)
@@ -884,7 +839,7 @@ cage_distribution_by_peak_position %>% ggplot(aes(x = pos, y = score, color = st
        x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
    scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw() -> plot_cage_by_peak_pos
 plot_cage_by_peak_pos
-ggsave("../Plots/input_exploration/cage_by_peak_pos_negFilteredSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_Filtered2total/cage_by_peak_pos_negFiltered2totalSampled.png", 
        plot_cage_by_peak_pos, 
        height = 5, dpi = 300) 
 
@@ -905,7 +860,7 @@ windows_total_cage_score_distribution %>% filter(total_score < 50) %>%
   theme_bw() +
   theme(legend.position = "none") -> windows_total_cage_score_plot1
 windows_total_cage_score_plot1
-ggsave("../Plots/input_exploration/windows_total_cage_score1_negFilteredSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_Filtered2total/windows_total_cage_score1_negFiltered2totalSampled.png", 
        windows_total_cage_score_plot1, 
        height = 5, dpi = 300) 
 
@@ -923,7 +878,7 @@ windows_total_cage_score_distribution %>% mutate(type = "Windows profiles") %>%
   scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
   theme(axis.title.x=element_blank()) -> windows_total_cage_score_plot2
 windows_total_cage_score_plot2
-ggsave("../Plots/input_exploration/windows_total_cage_score2_negFilteredSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_Filtered2total/windows_total_cage_score2_negFiltered2totalSampled.png", 
        windows_total_cage_score_plot2, 
        height = 5, dpi = 300) 
 
@@ -947,7 +902,7 @@ max_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red"
   theme_bw() +
   theme(legend.position = "none") -> max_tss_score_plot
 max_tss_score_plot
-ggsave("../Plots/input_exploration/max_tss_score_plot_negFilteredSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_Filtered2total/max_tss_score_plot_negFiltered2totalSampled.png", 
        max_tss_score_plot, 
        height = 4.5, dpi = 300) 
 ```
@@ -967,7 +922,7 @@ windows_score_distribution_by_pos_all_chr %>%
                      levels = paste("chr", c(1:22, "X", "Y"), sep=""))) +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
 windows_score_by_pos_by_chr
-ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_negFilteredSampled.png", 
+ggsave("../Plots/input_exploration/negative_set_Filtered2total/windows_score_by_pos_by_chr_negFiltered2totalSampled.png", 
      windows_score_by_pos_by_chr, 
      height = 7, width = 10, dpi = 300) 
 
@@ -981,28 +936,26 @@ windows_score_distribution_by_pos_all_chr %>%
              scales="free") +
   scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
 windows_score_by_pos_by_chr
-ggsave("../Plots/input_exploration/windows_score_by_pos_by_chr_negFilteredSampled_freeAxis.png", 
+ggsave("../Plots/input_exploration/negative_set_Filtered2total/windows_score_by_pos_by_chr_negFiltered2totalSampled_freeAxis.png", 
      windows_score_by_pos_by_chr, 
      height = 7, width = 10, dpi = 300) 
 ```
 
 
 ```{r}
-# Plot some profiles
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr1", sort=TRUE, save=TRUE, filename="profiles1_negFilteredSampled.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr6", sort=TRUE, save=TRUE, filename="profiles2_negFilteredSampled.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr11", sort=TRUE, save=TRUE, filename="profiles3_negFilteredSampled.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr2", sort=TRUE, save=TRUE, filename="profiles4_negFilteredSampled.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr3", sort=TRUE, save=TRUE, filename="profiles5_negFilteredSampled.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr4", sort=TRUE, save=TRUE, filename="profiles6_negFilteredSampled.png") 
-
-# Free axis
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles1_negFilteredSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles2_negFilteredSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles3_negFilteredSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles4_negFilteredSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles5_negFilteredSampled_freeAxis.png") 
-plot_set_profiles(neg_windows_filtered_sampled, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, filename="profiles6_negFilteredSampled_freeAxis.png") 
+# Plot some profiles (free axis)
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2total/profiles1_negFiltered2totalSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2total/profiles2_negFiltered2totalSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2total/profiles3_negFiltered2totalSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2total/profiles4_negFiltered2totalSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2total/profiles5_negFiltered2totalSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2total/profiles6_negFiltered2totalSampled.png") 
 ```
 
 
@@ -1010,9 +963,9 @@ plot_set_profiles(neg_windows_filtered_sampled, chr="chr4", ylim=c(NA,NA), scale
 ## Export data for ML feeding
 
 # Merge positive and negative examples
-windows_profile <- rbind(mutate(pos_windows_filtered$profiles, label = 1), 
+windows_profile <- rbind(mutate(pos_windows$profiles, label = 1), 
                          mutate(neg_windows_filtered_sampled$profiles, label = 0))
-windows_metadata <- rbind(mutate(pos_windows_filtered$metadata, label = 1), 
+windows_metadata <- rbind(mutate(pos_windows$metadata, label = 1), 
                           mutate(neg_windows_filtered_sampled$metadata, label = 0))
 
 # Shuffle the data
@@ -1021,7 +974,7 @@ windows_profile <- windows_profile[index,]
 windows_metadata <- windows_metadata[index,]
 
 paste("Size windows profile", nrow(windows_profile))
-paste("Size positive windows profile (filtered)", nrow(pos_windows_filtered$profile))
+paste("Size positive windows profile (filtered)", nrow(pos_windows$profile))
 paste("Size negative windows profile (filtered and sampled)", nrow(neg_windows_filtered_sampled$profile))
 
 # Divide train and test by chr
@@ -1032,12 +985,198 @@ windows_profile_train <- windows_profile[!test_index,]
 windows_metadata_train <- windows_metadata[!test_index,]
 
 # Export
-write_csv(windows_profile, "../Data/ML_input/profiles_all_replicate_negfiltered.csv")
-write_csv(windows_metadata, "../Data/ML_input/metadata_all_replicate_negfiltered.csv")
-write_csv(windows_profile_test, "../Data/ML_input/profiles_all_replicate_negfiltered_test.csv")
-write_csv(windows_metadata_test, "../Data/ML_input/metadata_all_replicate_negfiltered_test.csv")
-write_csv(windows_profile_train, "../Data/ML_input/profiles_all_replicate_negfiltered_train.csv")
-write_csv(windows_metadata_train, "../Data/ML_input/metadata_all_replicate_negfiltered_train.csv")
+write_csv(windows_profile, "../Data/ML_input/profiles_rank_negFiltered_atleast2total_v2.csv")
+write_csv(windows_metadata, "../Data/ML_input/metadata_rank_negFiltered_atleast2total_v2.csv")
+write_csv(windows_profile_test, "../Data/ML_input/profiles_rank_negFiltered_atleast2total_v2_test.csv")
+write_csv(windows_metadata_test, "../Data/ML_input/metadata_rank_negFiltered_atleast2total_v2_test.csv")
+write_csv(windows_profile_train, "../Data/ML_input/profiles_rank_negFiltered_atleast2total_v2_train.csv")
+write_csv(windows_metadata_train, "../Data/ML_input/metadata_rank_negFiltered_atleast2total_v2_train.csv")
 ```
 
 
+
+
+## Exploration of the negative set sampled from filtered negative profiles (shuffling 1807k ranges without overlaps, filtering by CAGE requirement (atleast a TSS of 2), sampling) 
+
+```{r}
+# Sampling from filtered negative set by minimum TSS score
+neg_windows_filtered_sampled <- windows_sampling(neg_windows_filtered, size=nrow(pos_windows$metadata))
+```
+
+### Filtered negative set exploration
+
+```{r}
+# Check
+rows = nrow(neg_windows_filtered_sampled$metadata)
+paste("Extracted profiles:", rows)
+krows <- round(rows/1000)
+
+
+## Explore the resulting profiles
+
+# Chr distribution
+plot_chr_distribution(neg_windows_filtered_sampled$metadata, paste("Chr distribution (Negative windows ", krows, "k)", sep=""), 
+                      save=TRUE, filename="negative_set_Filtered2max/chr_distribution_negFiltered2maxSampled.png")
+
+# Plot the distribution of CAGE coverage for ATAC-Seq peak relative positions
+cage_distribution_by_peak_position <- get_cage_distribution_by_peak_position(neg_windows_filtered_sampled$profiles)
+
+cage_distribution_by_peak_position %>% ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+ # facet_zoom(ylim=c(-3000, 1000), shrink = FALSE) +
+  labs(title = "CAGE score distribution over ATAC-Seq peaks relative position (All chr)",  
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+   scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) + theme_bw() -> plot_cage_by_peak_pos
+plot_cage_by_peak_pos
+ggsave("../Plots/input_exploration/negative_set_Filtered2max/cage_by_peak_pos_negFiltered2maxSampled.png", 
+       plot_cage_by_peak_pos, 
+       height = 5, dpi = 300) 
+
+# Plot distribution of ATAC-Seq peaks CAGE total coverage 
+windows_total_cage_score_distribution <- get_windows_total_cage_score_distribution(neg_windows_filtered_sampled$profiles)
+windows_total_cage_score_distribution
+windows_total_cage_score_distribution %>% arrange(desc(total_score))
+
+# Focus on ATAC-Seq peaks number
+windows_total_cage_score_distribution %>% filter(total_score < 50) %>% 
+  ggplot(aes(x = total_score, y = n_atac_peaks)) + 
+  geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[5]) + 
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
+  labs(title = "Windows profiles total score distribution", 
+       y = "N. Windows profiles",
+       x = "Total CAGE score",
+       fill = NA) +
+  theme_bw() +
+  theme(legend.position = "none") -> windows_total_cage_score_plot1
+windows_total_cage_score_plot1
+ggsave("../Plots/input_exploration/negative_set_Filtered2max/windows_total_cage_score1_negFiltered2maxSampled.png", 
+       windows_total_cage_score_plot1, 
+       height = 5, dpi = 300) 
+
+# Focus on CAGE total coverage per peak
+windows_total_cage_score_distribution %>% mutate(type = "Windows profiles") %>% 
+  ggplot(aes(x = type, y = total_score)) + geom_violin(fill= brewer.pal(8,"Greys")[3]) +
+  geom_jitter(aes(size = n_atac_peaks, col = n_atac_peaks), alpha=0.5) + theme_bw() +
+  labs(title = "Windows profiles total score distribution", 
+     x = NA,
+     y = "Total CAGE score",
+     size = "N. Windows profiles",
+     col = "") +
+  facet_zoom(ylim=c(0, 1000), shrink = FALSE) +
+  scale_colour_gradientn(colours = c("blue", "red"), values = c(0, 0.5, 1)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 10)) +
+  theme(axis.title.x=element_blank()) -> windows_total_cage_score_plot2
+windows_total_cage_score_plot2
+ggsave("../Plots/input_exploration/negative_set_Filtered2max/windows_total_cage_score2_negFiltered2maxSampled.png", 
+       windows_total_cage_score_plot2, 
+       height = 5, dpi = 300) 
+
+# Plot the maximum tss score of each window
+max_tss_score_distribution <- neg_windows_filtered_sampled$profiles %>% 
+  mutate(atac_start = neg_windows_filtered_sampled$metadata$atac_start) %>%         
+  mutate(max_tss_score = apply(neg_windows_filtered_sampled$profiles, 1, max)) %>% 
+  select(atac_start, max_tss_score) %>% group_by(max_tss_score) %>% count()
+
+max_tss_score_distribution
+
+max_tss_score_distribution %>% ggplot(aes(x = max_tss_score, y = n, fill = "red")) + 
+  geom_bar(stat = "identity", color = "black", fill = brewer.pal(8,"Dark2")[3]) + 
+  facet_zoom(ylim=c(0, 60), shrink = FALSE) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 15)) +
+  coord_cartesian(xlim = c(0, 50)) +
+  labs(title = "Max TSS score distribution", 
+       y = "N. windows profiles",
+       x = "Max TSS score",
+       fill = NA) +
+  theme_bw() +
+  theme(legend.position = "none") -> max_tss_score_plot
+max_tss_score_plot
+ggsave("../Plots/input_exploration/negative_set_Filtered2max/max_tss_score_plot_negFiltered2maxSampled.png", 
+       max_tss_score_plot, 
+       height = 4.5, dpi = 300) 
+```
+
+
+```{r}
+# Plot different chromosomes score distribution
+windows_score_distribution_by_pos_all_chr <-   
+  get_score_distribution_by_pos_all_chr(neg_windows_filtered_sampled)
+  
+windows_score_distribution_by_pos_all_chr %>% 
+  ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+  labs(title = paste("Negative set CAGE score distribution over ATAC-Seq peaks relative position (", krows, "k)", sep=""),
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+  coord_cartesian(ylim = c(-1000, 1000)) +
+  facet_wrap(~factor(chr,
+                     levels = paste("chr", c(1:22, "X", "Y"), sep=""))) +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
+windows_score_by_pos_by_chr
+ggsave("../Plots/input_exploration/negative_set_Filtered2max/windows_score_by_pos_by_chr_negFiltered2maxSampled.png", 
+     windows_score_by_pos_by_chr, 
+     height = 7, width = 10, dpi = 300) 
+
+# Free axis
+windows_score_distribution_by_pos_all_chr %>% 
+  ggplot(aes(x = pos, y = score, color = strand)) + geom_line() +
+  labs(title = paste("Negative set CAGE score distribution over ATAC-Seq peaks relative position (", krows, "k)", sep=""),
+       x = "Relative position to ATAC mid peaks", y = "Sum of scores over windows") + 
+  facet_wrap(~factor(chr,
+                     levels = paste("chr", c(1:22, "X", "Y"), sep="")),
+             scales="free") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 5)) + theme_bw() -> windows_score_by_pos_by_chr
+windows_score_by_pos_by_chr
+ggsave("../Plots/input_exploration/negative_set_Filtered2max/windows_score_by_pos_by_chr_negFiltered2maxSampled_freeAxis.png", 
+     windows_score_by_pos_by_chr, 
+     height = 7, width = 10, dpi = 300) 
+```
+
+
+```{r}
+# Plot some profiles (free axis)
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr1", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2max/profiles1_negFiltered2maxSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr6", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2max/profiles2_negFiltered2maxSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr11", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2max/profiles3_negFiltered2maxSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr2", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2max/profiles4_negFiltered2maxSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr3", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2max/profiles5_negFiltered2maxSampled.png") 
+plot_set_profiles(neg_windows_filtered_sampled, chr="chr4", ylim=c(NA,NA), scales="free", sort=TRUE, save=TRUE, 
+                  filename="negative_set_Filtered2max/profiles6_negFiltered2maxSampled.png") 
+```
+
+
+```{r}
+## Export data for ML feeding
+
+# Merge positive and negative examples
+windows_profile <- rbind(mutate(pos_windows$profiles, label = 1), 
+                         mutate(neg_windows_filtered_sampled$profiles, label = 0))
+windows_metadata <- rbind(mutate(pos_windows$metadata, label = 1), 
+                          mutate(neg_windows_filtered_sampled$metadata, label = 0))
+
+# Shuffle the data
+index <- sample(nrow(windows_profile))
+windows_profile <- windows_profile[index,]
+windows_metadata <- windows_metadata[index,]
+
+paste("Size windows profile", nrow(windows_profile))
+paste("Size positive windows profile (filtered)", nrow(pos_windows$profile))
+paste("Size negative windows profile (filtered and sampled)", nrow(neg_windows_filtered_sampled$profile))
+
+# Divide train and test by chr
+test_index <- windows_metadata$chr %in% c("chr2", "chr3", "chr4")
+windows_profile_test <- windows_profile[test_index,]
+windows_metadata_test <- windows_metadata[test_index,]
+windows_profile_train <- windows_profile[!test_index,]
+windows_metadata_train <- windows_metadata[!test_index,]
+
+# Export
+write_csv(windows_profile, "../Data/ML_input/profiles_rank_negFiltered_atleast2max_v2.csv")
+write_csv(windows_metadata, "../Data/ML_input/metadata_rank_negFiltered_atleast2max_v2.csv")
+write_csv(windows_profile_test, "../Data/ML_input/profiles_rank_negFiltered_atleast2max_v2_test.csv")
+write_csv(windows_metadata_test, "../Data/ML_input/metadata_rank_negFiltered_atleast2max_v2_test.csv")
+write_csv(windows_profile_train, "../Data/ML_input/profiles_rank_negFiltered_atleast2max_v2_train.csv")
+write_csv(windows_metadata_train, "../Data/ML_input/metadata_rank_negFiltered_atleast2max_v2_train.csv")
+```
