@@ -27,4 +27,3 @@ This is the repository for Stefano project and thesis
 * Implemented removal of intra ATAC overlaps by rank (total CAGE scpre) approach 
 * Assess the meaningfulness of the new input
 * Tested the effect of using different filters on the negative set
-
