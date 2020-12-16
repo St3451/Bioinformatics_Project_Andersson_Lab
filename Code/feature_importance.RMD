@@ -1,0 +1,87 @@
+---
+title: "Feature importance"
+author: "Stefano Pellegrini"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+FILENAME <- "negFiltered_atleast2max"
+DIRECTORY <- "../Plots/model_development/"
+ 
+# Load files
+rf_importance <- read.csv("../Data/ML_output/feature_importance/rf_importance_rank_negFiltered_atleast2max.csv")
+lgb_importance <- read.csv("../Data/ML_output/feature_importance/lgb_importance_rank_negFiltered_atleast2max.csv")
+```
+
+
+```{r}
+# Plot the feature importance
+format_importance <- function(peaks_profile_df){
+  as_tibble(peaks_profile_df) %>% select(feature, average) %>%
+  mutate(pos = c(-250:250, -250:250), strand = c(rep("+", 501), rep("-", 501))) %>% 
+  rename(score = average) %>% relocate(score, .after = strand) %>%
+  mutate(score = ifelse(strand == "-", -score, score))
+}
+
+rf_importance_to_plot <- format_importance(rf_importance)
+lgb_importance_to_plot <- format_importance(lgb_importance)
+
+# Random forest
+rf_importance_to_plot %>% ggplot(aes(x = pos, y = score, fill=strand)) + 
+geom_bar(stat="identity", color="black") +
+labs(title = "Random forest feature importance (averaged over CV)", 
+     x = "Feature (relative position to ATAC mid peaks)", y = "Score") + 
+geom_smooth(se=FALSE, size=0.6) +
+scale_x_continuous(breaks = scales::pretty_breaks(n = 20)) +
+coord_cartesian(xlim = c(-235, 235)) + theme_bw() -> plot_rf_importance
+plot_cage_by_peak_pos
+ggsave(paste(DIRECTORY, "rf_feature_importance_", FILENAME, ".png", sep=""), 
+        plot_rf_importance, 
+        height = 5, width=20, dpi = 300) 
+ 
+rf_importance_to_plot %>% mutate(feature = paste(pos, " (", strand, ")", sep="")) %>%
+mutate(score = abs(score)) %>% arrange(desc(score)) %>% head(20) %>% 
+arrange(score) %>% mutate(row = row_number()) %>%
+  ggplot(aes(x = reorder(feature, row), y = score, fill = strand)) + 
+  geom_bar(stat="identity", color="black") + 
+  labs(title = "RF top 20 features (averaged over CV)",  
+       x = "Feature", y = "Score") + 
+  coord_flip() + theme_bw() -> plot_rf_importance_top20
+plot_rf_importance_top20
+ggsave(paste(DIRECTORY, "rf_feature_importance_top20_", FILENAME, ".png", sep=""), 
+        plot_rf_importance_top20, 
+        height = 5, width=4, dpi = 300) 
+ 
+# LightGBM
+lgb_importance_to_plot %>% ggplot(aes(x = pos, y = score, fill = strand)) + 
+geom_bar(stat="identity", color="black") +
+   labs(title = "LightGBM feature importance (averaged over CV)",  
+        x = "Feature (relative position to ATAC mid peaks)", y = "Score") + 
+    geom_smooth(se=FALSE, size=0.6) +
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 20)) +
+    coord_cartesian(xlim = c(-235, 235)) + theme_bw() -> plot_lgb_importance
+ plot_lgb_importance
+ ggsave(paste(DIRECTORY, "lgb_feature_importance_", FILENAME, ".png", sep=""), 
+        plot_lgb_importance, 
+        height = 5, width=20, dpi = 300) 
+ 
+ lgb_importance_to_plot %>% mutate(feature = paste(pos, " (", strand, ")", sep="")) %>%
+   mutate(score = abs(score)) %>% arrange(desc(score)) %>% head(20) %>% 
+   arrange(score) %>% mutate(row = row_number()) %>%
+   ggplot(aes(x = reorder(feature, row), y = score, fill = strand)) + 
+   geom_bar(stat="identity", color="black") + 
+   labs(title = "LGBM top 20 features (avg over CV)",  
+        x = "Feature", y = "Score") + 
+   coord_flip() + theme_bw() -> plot_lgb_importance_top20
+ plot_lgb_importance_top20
+ ggsave(paste(DIRECTORY, "lgb_feature_importance_top20_", FILENAME, ".png", sep=""), 
+        plot_lgb_importance_top20, 
+       height = 5, width=4, dpi = 300) 
+```
+
