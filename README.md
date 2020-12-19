@@ -28,3 +28,4 @@ This is the repository for Stefano project and thesis
 * Assess the meaningfulness of the new input
 * Tested the effect of using different filters on the negative set
 * Added feature importance
+* Implemented grid and random search for hyperparameters tuning
