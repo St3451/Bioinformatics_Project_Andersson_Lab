@@ -29,3 +29,15 @@ This is the repository for Stefano project and thesis
 * Tested the effect of using different filters on the negative set
 * Added feature importance
 * Implemented grid and random search for hyperparameters tuning
+
+## Week 6
+* Added weight scalers (balanced by the classifier internal function, balanced by custom function, set by the user as hyperparameter) for both RF and LGBM 
+* Added LGBM peformance evaluation during training (evaluation and plot of binary error, MCC, F1, TPR and TNR)
+* Extensive test of the different weight scalers on three datasets (differing by the negative and positive samples size ratio: 0.5, 1, 3)
+* Added seed values on all CV chromosomes split (fairer comparison between methods) and max number of CV iterations for grid and random search (speed up the search)
+
+* Ideas to implement:
+    * Set up the conda environment to run the scripts in the server (useful for 10+ hours jobs)
+    * Run RBF SVM on final data to motivate our choice of using RF and LGBM over SVM 
+    * Fast grid search with a subset of the data, validation of the optimal parameters on the full data, plot (scatter for continuous and boxplot for categorical) of each hyperparameter against the target variable 
+    * Smooth the input (smooth spline)
