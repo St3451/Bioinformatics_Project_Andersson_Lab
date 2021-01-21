@@ -36,6 +36,12 @@ This is the repository for Stefano project and thesis
 * Extensive test of the different weight scalers on three datasets (differing by the negative and positive samples size ratio: 0.5, 1, 3)
 * Added seed values on all CV chromosomes split (fairer comparison between methods) and max number of CV iterations for grid and random search (speed up the search)
 
+## Week 7
+* Enabled GPU for LGBM (issue: see warning during training) and SVM (ThunderSVM)
+* Implemented prediction on test data for all models
+* Polished the code
+
+
 * Ideas to implement:
     * Set up the conda environment to run the scripts in the server (useful for 10+ hours jobs)
     * Run RBF SVM on final data to motivate our choice of using RF and LGBM over SVM 
