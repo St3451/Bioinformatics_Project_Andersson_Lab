@@ -5,6 +5,6 @@ The aim of the project was to estabilish the feasibility of the method I will be
 
 ## Project title: "Machine learning to infer active open chromatin regions from transcription initiation events"
 
-* [Project report](https://github.com/St3451/Thesis_Pilot_Project_Andersson_Lab/blob/master/Report.pdf)
-* [Presentation slides](https://github.com/St3451/Thesis_Pilot_Project_Andersson_Lab/raw/master/Presentation_slides.pptx)
-* [Project code](https://github.com/St3451/Thesis_Pilot_Project_Andersson_Lab/tree/master/Code)
+* [Project report](https://github.com/St3451/Bioinformatics_Project_Andersson_Lab/blob/master/Report.pdf)
+* [Presentation slides](https://github.com/St3451/Bioinformatics_Project_Andersson_Lab/raw/master/Presentation_slides.pptx)
+* [Project code](https://github.com/St3451/Bioinformatics_Project_Andersson_Lab/tree/master/Code)
