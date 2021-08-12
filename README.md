@@ -1,6 +1,6 @@
 # Bioinformatics project (thesis pilot project) at Andersson Lab
 
-This repository contains the report, presentation slides, and code of the bioinformatics project I did at the Andersson Lab (Bioinformatics Centre, Department of Biology, University of Copenhagen). 
+This repository contains the report, presentation slides, and code of the bioinformatics project I did at the Andersson Lab (Bioinformatics Centre, University of Copenhagen). 
 The aim of the project was to estabilish the feasibility of the method I will be using in the thesis.
 
 ## Project title: "Machine learning to infer active open chromatin regions from transcription initiation events"
